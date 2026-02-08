@@ -9,7 +9,14 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.avaglosny.fit4fitness",
+      "buildNumber": "1",
+      "appleTeamId": "3NF58SXX54",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app does not use the microphone.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -31,11 +38,11 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 300,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#00B8A9",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#1a1a2e"
           }
         }
       ]
@@ -43,6 +50,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "fae472ec-1f9c-4779-a967-892e0955652b"
+      }
     }
   }
 }
