@@ -3,8 +3,8 @@ import { nutritionStore } from '@/app/lib/nutritionStore';
 import { userStore } from '@/app/lib/userStore';
 import { ThemedView } from '@/components/themed-view';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function SignUpScreen() {
@@ -12,7 +12,11 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const router = useRouter();
+  const passwordRef = useRef('');
+  const confirmPasswordRef = useRef('');
 
   const validateInputs = () => {
     setError('');
@@ -56,10 +60,19 @@ export default function SignUpScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#E8E8E8' }} edges={['top', 'bottom']}>
     <ThemedView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Back</Text>
-        </TouchableOpacity>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={0}
+      >
+          <ScrollView 
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <TouchableOpacity onPress={() => router.back()}>
+              <Text style={styles.backButton}>← Back</Text>
+            </TouchableOpacity>
 
         <Text style={styles.title}>Create Account</Text>
         <Text style={styles.subtitle}>Set up your Fit4Fitness account to start your journey.</Text>
@@ -83,33 +96,72 @@ export default function SignUpScreen() {
 
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="At least 6 characters"
-            placeholderTextColor="#888"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoComplete="off"
-            textContentType="oneTimeCode"
-            autoCorrect={false}
-          />
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={[styles.input, styles.passwordInput]}
+              placeholder="At least 6 characters"
+              placeholderTextColor="#888"
+              value={password}
+              onChangeText={(text) => {
+                passwordRef.current = text;
+                setPassword(text);
+              }}
+              onFocus={() => {
+                if (passwordRef.current && !password) {
+                  setPassword(passwordRef.current);
+                }
+              }}
+              secureTextEntry={!showPassword}
+              autoCorrect={false}
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+              clearTextOnFocus={false}
+            />
+            <TouchableOpacity 
+              onPress={() => setShowPassword(!showPassword)}
+              style={styles.eyeButton}
+            >
+              <Text style={styles.eyeIcon}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Confirm Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Re-enter password"
-            placeholderTextColor="#888"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry
-            maxLength={20}
-            autoComplete="off"
-            textContentType="oneTimeCode"
-            autoCorrect={false}
-          />
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={[styles.input, styles.passwordInput]}
+              placeholder="Re-enter password"
+              placeholderTextColor="#888"
+              value={confirmPassword}
+              onChangeText={(text) => {
+                confirmPasswordRef.current = text;
+                setConfirmPassword(text);
+              }}
+              onFocus={() => {
+                if (confirmPasswordRef.current && !confirmPassword) {
+                  setConfirmPassword(confirmPasswordRef.current);
+                }
+              }}
+              secureTextEntry={!showConfirmPassword}
+              maxLength={20}
+              autoCorrect={false}
+              autoComplete="off"
+              textContentType="none"
+              importantForAutofill="no"
+              clearTextOnFocus={false}
+            />
+            <TouchableOpacity 
+              onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+              style={styles.eyeButton}
+            >
+              <Text style={styles.eyeIcon}>{showConfirmPassword ? '👁️' : '👁️‍🗨️'}</Text>
+            </TouchableOpacity>
+          </View>
+          {confirmPassword.length > 0 && password !== confirmPassword && (
+            <Text style={styles.mismatchText}>Passwords do not match</Text>
+          )}
         </View>
 
         <TouchableOpacity
@@ -127,6 +179,7 @@ export default function SignUpScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </ThemedView>
     </SafeAreaView>
   );
@@ -180,6 +233,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#1A1A1A',
+  },
+  mismatchText: {
+    fontSize: 12,
+    color: '#E74C3C',
+    marginTop: 4,
+  },
+  passwordContainer: {
+    position: 'relative',
+  },
+  passwordInput: {
+    paddingRight: 48,
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    padding: 4,
+  },
+  eyeIcon: {
+    fontSize: 20,
   },
   input: {
     backgroundColor: '#FFF',

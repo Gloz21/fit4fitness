@@ -7,8 +7,8 @@ import { workoutSessionStore } from '@/app/lib/workoutSessionStore';
 import { workoutStore } from '@/app/lib/workoutStore';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -17,6 +17,7 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ visible, onClose }: SettingsModalProps) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<'account' | 'preferences'>('account');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -74,10 +75,53 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
     }, 300);
   };
 
+  const doDeleteAccount = async () => {
+    const result = await authStore.deleteAccount();
+    if (result.success) {
+      await userStore.reset();
+      await nutritionStore.reset();
+      await workoutStore.reset();
+      await workoutSessionStore.reset();
+      await recipeStore.reset();
+      onClose();
+      setTimeout(() => {
+        router.dismissAll();
+        router.replace('/');
+      }, 300);
+    } else {
+      if (Platform.OS === 'web') {
+        window.alert(result.error || 'Failed to delete account.');
+      } else {
+        Alert.alert('Error', result.error || 'Failed to delete account.');
+      }
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to permanently delete your account and all your data? This cannot be undone.');
+      if (confirmed) {
+        doDeleteAccount();
+      }
+    } else {
+      Alert.alert(
+        'Delete Account',
+        'Are you sure you want to permanently delete your account and all your data? This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: doDeleteAccount,
+          },
+        ]
+      );
+    }
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#E8E8E8' }}>
-      <View style={styles.container}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 50) }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} style={{ padding: 8 }}>
@@ -172,6 +216,11 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
               <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
                 <Text style={styles.logoutButtonText}>Logout</Text>
               </TouchableOpacity>
+
+              {/* Delete Account */}
+              <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount}>
+                <Text style={styles.deleteButtonText}>Delete Account</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.section}>
@@ -194,7 +243,6 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
           )}
         </ScrollView>
       </View>
-      </SafeAreaView>
     </Modal>
   );
 }
@@ -202,7 +250,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#E8E8E8',
+    backgroundColor: '#FFF',
   },
   header: {
     flexDirection: 'row',
@@ -333,6 +381,20 @@ const styles = StyleSheet.create({
   },
   logoutButtonText: {
     color: '#FFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  deleteButton: {
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+    borderWidth: 2,
+    borderColor: '#FF3B30',
+  },
+  deleteButtonText: {
+    color: '#FF3B30',
     fontWeight: '800',
     fontSize: 14,
   },

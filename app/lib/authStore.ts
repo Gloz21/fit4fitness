@@ -1,30 +1,16 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import React from 'react';
+import { supabase } from './supabaseConfig';
 
-// Use AsyncStorage for both web and native (works on all platforms)
-const storage = {
-  async getItem(key: string): Promise<string | null> {
-    try {
-      return await AsyncStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  },
-  async setItem(key: string, value: string): Promise<void> {
-    try {
-      await AsyncStorage.setItem(key, value);
-    } catch {
-      // Ignore
-    }
-  },
-  async removeItem(key: string): Promise<void> {
-    try {
-      await AsyncStorage.removeItem(key);
-    } catch {
-      // Ignore
-    }
-  },
-};
+// Convert username to a fake email for Supabase Auth
+// Users type a username, we internally use username@fit4fitness.app
+function usernameToEmail(username: string): string {
+  return `${username.toLowerCase().trim()}@fit4fitness.app`;
+}
+
+// Extract username from fake email
+function emailToUsername(email: string): string {
+  return email.replace('@fit4fitness.app', '');
+}
 
 interface AuthState {
   currentUsername: string | null;
@@ -43,12 +29,20 @@ const listeners: Set<(state: AuthState) => void> = new Set();
 export const authStore = {
   async hydrate() {
     try {
-      const username = await storage.getItem('currentUsername');
-      authState = {
-        currentUsername: username,
-        loading: false,
-        hydrated: true,
-      };
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.email) {
+        authState = {
+          currentUsername: emailToUsername(session.user.email),
+          loading: false,
+          hydrated: true,
+        };
+      } else {
+        authState = {
+          currentUsername: null,
+          loading: false,
+          hydrated: true,
+        };
+      }
       this.notify();
     } catch (error) {
       authState = {
@@ -62,21 +56,26 @@ export const authStore = {
 
   async signup(username: string, password: string): Promise<{ success: boolean; error?: string }> {
     try {
-      // Check if username already exists
-      const existingUsers = await storage.getItem('users');
-      const users = existingUsers ? JSON.parse(existingUsers) : {};
+      const email = usernameToEmail(username);
       
-      const normalizedUsername = username.toLowerCase().trim();
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+      });
       
-      if (users[normalizedUsername]) {
-        return { success: false, error: 'Username already exists.' };
+      if (error) {
+        // Make error messages user-friendly
+        if (error.message.includes('already registered')) {
+          return { success: false, error: 'Username already exists.' };
+        }
+        return { success: false, error: error.message };
       }
       
-      // Store new user with normalized username
-      users[normalizedUsername] = password;
-      await storage.setItem('users', JSON.stringify(users));
-      await storage.setItem('currentUsername', normalizedUsername);
+      if (!data.user) {
+        return { success: false, error: 'Sign up failed. Please try again.' };
+      }
       
+      const normalizedUsername = username.toLowerCase().trim();
       authState = {
         currentUsername: normalizedUsername,
         loading: false,
@@ -92,23 +91,25 @@ export const authStore = {
 
   async signin(username: string, password: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const existingUsers = await storage.getItem('users');
-      const users = existingUsers ? JSON.parse(existingUsers) : {};
+      const email = usernameToEmail(username);
+      
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          return { success: false, error: 'Incorrect username or password.' };
+        }
+        return { success: false, error: error.message };
+      }
+      
+      if (!data.user) {
+        return { success: false, error: 'Sign in failed. Please try again.' };
+      }
       
       const normalizedUsername = username.toLowerCase().trim();
-      
-      // Check if user exists
-      if (!users[normalizedUsername]) {
-        return { success: false, error: 'User not found. Please sign up first.' };
-      }
-      
-      // Check password
-      if (users[normalizedUsername] !== password) {
-        return { success: false, error: 'Invalid password.' };
-      }
-      
-      await storage.setItem('currentUsername', normalizedUsername);
-      
       authState = {
         currentUsername: normalizedUsername,
         loading: false,
@@ -124,7 +125,7 @@ export const authStore = {
 
   async logout(): Promise<void> {
     try {
-      await storage.removeItem('currentUsername');
+      await supabase.auth.signOut();
       authState = {
         currentUsername: null,
         loading: false,
@@ -143,21 +144,63 @@ export const authStore = {
         return { success: false, error: 'Not logged in.' };
       }
 
-      const existingUsers = await storage.getItem('users');
-      const users = existingUsers ? JSON.parse(existingUsers) : {};
-
-      // Verify current password
-      if (!users[username] || users[username] !== currentPassword) {
+      // Verify current password by trying to sign in
+      const email = usernameToEmail(username);
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+      
+      if (verifyError) {
         return { success: false, error: 'Current password is incorrect.' };
       }
 
       // Update password
-      users[username] = newPassword;
-      await storage.setItem('users', JSON.stringify(users));
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      
+      if (updateError) {
+        return { success: false, error: updateError.message || 'Password change failed.' };
+      }
 
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message || 'Password change failed.' };
+    }
+  },
+
+  async deleteAccount(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const username = authState.currentUsername;
+      if (!username) {
+        return { success: false, error: 'Not logged in.' };
+      }
+
+      // Delete user data from all Supabase tables
+      const userId = username;
+      await Promise.allSettled([
+        supabase.from('user_profiles').delete().eq('user_id', userId),
+        supabase.from('nutrition').delete().eq('user_id', userId),
+        supabase.from('workouts').delete().eq('user_id', userId),
+        supabase.from('workout_sessions').delete().eq('user_id', userId),
+        supabase.from('exercises').delete().eq('user_id', userId),
+        supabase.from('saved_recipes').delete().eq('user_id', userId),
+      ]);
+
+      // Sign out the user
+      await supabase.auth.signOut();
+
+      authState = {
+        currentUsername: null,
+        loading: false,
+        hydrated: true,
+      };
+      this.notify();
+
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Account deletion failed.' };
     }
   },
 
@@ -191,7 +234,7 @@ export const authStore = {
   },
 
   cleanup() {
-    // No cleanup needed for AsyncStorage
+    // No cleanup needed
   },
 };
 

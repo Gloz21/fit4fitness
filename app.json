@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.avaglosny.fit4fitness",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "appleTeamId": "3NF58SXX54",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app does not use the microphone.",
@@ -45,7 +45,9 @@
             "backgroundColor": "#1a1a2e"
           }
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
