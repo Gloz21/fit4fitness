@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { AudioPlayer, AudioStatus, createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import React from 'react';
 
 interface SoundState {
@@ -13,7 +13,23 @@ let soundState: SoundState = {
 };
 
 const listeners: Set<(state: SoundState) => void> = new Set();
-let backgroundMusic: Audio.Sound | null = null;
+let backgroundMusic: AudioPlayer | null = null;
+
+// Play a one-shot sound effect from a remote URI and release it when finished.
+async function playEffect(uri: string, volume: number): Promise<void> {
+  try {
+    const player = createAudioPlayer({ uri });
+    player.volume = volume;
+    player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+      if (status.didJustFinish) {
+        player.remove();
+      }
+    });
+    player.play();
+  } catch (e) {
+    console.log('Sound unavailable:', e);
+  }
+}
 
 export const soundStore = {
   async hydrate() {
@@ -22,9 +38,9 @@ export const soundStore = {
       if (stored) {
         soundState = JSON.parse(stored);
       }
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
       });
       // Start background music if enabled after hydration
       if (soundState.musicEnabled) {
@@ -38,13 +54,13 @@ export const soundStore = {
 
   async toggleMusic(): Promise<void> {
     soundState.musicEnabled = !soundState.musicEnabled;
-    
+
     if (!soundState.musicEnabled) {
       await this.stopBackgroundMusic();
     } else {
       await this.playBackgroundMusic();
     }
-    
+
     try {
       await AsyncStorage.setItem('fitlearn:sound', JSON.stringify(soundState));
     } catch (e) {
@@ -55,7 +71,7 @@ export const soundStore = {
 
   async toggleSoundEffects(): Promise<void> {
     soundState.soundEffectsEnabled = !soundState.soundEffectsEnabled;
-    
+
     try {
       await AsyncStorage.setItem('fitlearn:sound', JSON.stringify(soundState));
     } catch (e) {
@@ -74,80 +90,24 @@ export const soundStore = {
 
   async playBeep(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      console.log('🔊 Playing beep...');
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg' },
-        { shouldPlay: true, volume: 0.6 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Beep sound unavailable:', e);
-    }
+    console.log('🔊 Playing beep...');
+    await playEffect('https://actions.google.com/sounds/v1/alarms/beep_short.ogg', 0.6);
   },
 
   async playButtonClick(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/foley/click_hit.ogg' },
-        { shouldPlay: true, volume: 0.4 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Click sound unavailable:', e);
-    }
+    await playEffect('https://actions.google.com/sounds/v1/foley/click_hit.ogg', 0.4);
   },
 
   async playCountdownTick(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg' },
-        { shouldPlay: true, volume: 0.5 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Countdown tick unavailable:', e);
-    }
+    await playEffect('https://actions.google.com/sounds/v1/alarms/beep_short.ogg', 0.5);
   },
 
   async playTimerComplete(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      console.log('🔔 Playing timer complete sound...');
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg' },
-        { shouldPlay: true, volume: 0.7 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Timer complete sound unavailable:', e);
-    }
+    console.log('🔔 Playing timer complete sound...');
+    await playEffect('https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg', 0.7);
   },
 
   async playCountdownVoice(number: number): Promise<void> {
@@ -161,12 +121,14 @@ export const soundStore = {
 
     try {
       console.log('🎵 Starting background music...');
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
-        { shouldPlay: true, volume: 0.3, isLooping: true }
-      );
-      
-      backgroundMusic = sound;
+      const player = createAudioPlayer({
+        uri: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+      });
+      player.volume = 0.3;
+      player.loop = true;
+      player.play();
+
+      backgroundMusic = player;
       console.log('🎵 Background music started successfully');
     } catch (e) {
       console.log('Background music unavailable:', e);
@@ -176,8 +138,8 @@ export const soundStore = {
   async stopBackgroundMusic(): Promise<void> {
     if (backgroundMusic) {
       try {
-        await backgroundMusic.stopAsync();
-        await backgroundMusic.unloadAsync();
+        backgroundMusic.pause();
+        backgroundMusic.remove();
         backgroundMusic = null;
       } catch (e) {
         console.log('Error stopping music');
@@ -187,60 +149,18 @@ export const soundStore = {
 
   async playWorkoutComplete(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      console.log('🎉 Playing workout complete sound...');
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/cartoon/cartoon_cowbell.ogg' },
-        { shouldPlay: true, volume: 0.7 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Completion sound unavailable:', e);
-    }
+    console.log('🎉 Playing workout complete sound...');
+    await playEffect('https://actions.google.com/sounds/v1/cartoon/cartoon_cowbell.ogg', 0.7);
   },
 
   async playCorrectAnswer(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg' },
-        { shouldPlay: true, volume: 0.6 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Correct answer sound unavailable:', e);
-    }
+    await playEffect('https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg', 0.6);
   },
 
   async playIncorrectAnswer(): Promise<void> {
     if (!soundState.soundEffectsEnabled) return;
-    
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://actions.google.com/sounds/v1/cartoon/cartoon_boing.ogg' },
-        { shouldPlay: true, volume: 0.5 }
-      );
-      
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
-      });
-    } catch (e) {
-      console.log('Incorrect answer sound unavailable:', e);
-    }
+    await playEffect('https://actions.google.com/sounds/v1/cartoon/cartoon_boing.ogg', 0.5);
   },
 
   getState(): SoundState {

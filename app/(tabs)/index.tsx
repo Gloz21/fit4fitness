@@ -1,3 +1,4 @@
+import { Avatar } from '@/components/avatar';
 import { ThemedView } from '@/components/themed-view';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
@@ -5,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AccountModal from '../components/AccountModal';
+import ImportWorkoutModal from '../components/ImportWorkoutModal';
 import MacroBreakdown from '../components/MacroBreakdown';
 import MacroWheel from '../components/MacroWheel';
 import RealisticMuscleDiagram, { consolidateMuscleVolume } from '../components/RealisticMuscleDiagram';
@@ -21,12 +23,14 @@ import { nutritionStore, useNutritionStore } from '../lib/nutritionStore';
 import { getRecipesForGoal, Recipe } from '../lib/recipes';
 import { recipeStore, useRecipeStore } from '../lib/recipeStore';
 import SettingsModal from '../lib/SettingsModal';
+import { convertLoad, displayToKg, formatBodyWeight, kgToDisplay, loadIn, useUnits, weightUnitFor, type WeightUnit } from '../lib/units';
 import { getLevelFromXP, getLevelProgress, getXPToNextLevel, userStore, useUserStore } from '../lib/userStore';
 import { getCategorizedWorkouts, getDailyChallengeWorkout, getRecommendedWorkouts, Workout } from '../lib/workouts';
 import { useWorkoutSessionStore, workoutSessionStore } from '../lib/workoutSessionStore';
 import { useWorkoutStore, workoutStore } from '../lib/workoutStore';
 // Allowed exercise categories for display and filtering
 import { exerciseCatalog } from '../lib/exercises';
+import { exerciseStore } from '../lib/exerciseStore';
 // Get all unique categories from the catalog
 const allExerciseCategories = Array.from(new Set(exerciseCatalog.map(ex => ex.category)));
 // Always include these categories
@@ -59,6 +63,30 @@ export default function HomeScreen() {
   const [newRecipeCarbs, setNewRecipeCarbs] = useState('');
   const [newRecipeFat, setNewRecipeFat] = useState('');
   const [workoutBuilderVisible, setWorkoutBuilderVisible] = useState(false);
+  const [importVisible, setImportVisible] = useState(false);
+  const [builderHeading, setBuilderHeading] = useState<string | undefined>(undefined);
+  const [builderNotice, setBuilderNotice] = useState<string | undefined>(undefined);
+
+  // Your own workouts are edited in place. Built-in workouts are shared templates, so
+  // editing one makes a personal copy in My Workouts and leaves the original unchanged.
+  const openWorkoutEditor = (w: Workout) => {
+    if (w.isCustom) {
+      setBuilderHeading(undefined);
+      setBuilderNotice(undefined);
+      setEditingWorkout(w);
+    } else {
+      setBuilderHeading('Customize Workout');
+      setBuilderNotice('Your changes save as your own copy in My Workouts. The original stays in the catalog.');
+      setEditingWorkout({
+        ...w,
+        id: `custom-${Date.now()}`,
+        isCustom: true,
+        createdAt: Date.now(),
+        exercises: w.exercises.map((e) => ({ ...e })),
+      });
+    }
+    setWorkoutBuilderVisible(true);
+  };
   const [editingWorkout, setEditingWorkout] = useState<Workout | null>(null);
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
   const [workoutSummary, setWorkoutSummary] = useState<any | null>(null);
@@ -69,6 +97,24 @@ export default function HomeScreen() {
   const [oneRepMaxes, setOneRepMaxes] = useState<{ [exercise: string]: number }>({});
   const [deleteConfirmWorkoutId, setDeleteConfirmWorkoutId] = useState<string | null>(null);
   const { goal, profile, hydrated: userHydrated } = useUserStore();
+  const units = useUnits();
+  const wUnit = weightUnitFor(units);
+  const [oneRepDrafts, setOneRepDrafts] = useState<{ [exercise: string]: string }>({});
+  const [showRecommended, setShowRecommended] = useState(true);
+  const recommendedKey = `showRecommended_${authStore.getCurrentUserId() ?? 'guest'}`;
+  useEffect(() => {
+    AsyncStorage.getItem(recommendedKey)
+      .then((saved) => {
+        if (saved !== null) setShowRecommended(saved === 'true');
+      })
+      .catch(() => {});
+  }, [recommendedKey]);
+  const toggleRecommended = () => {
+    setShowRecommended((prev) => {
+      AsyncStorage.setItem(recommendedKey, String(!prev)).catch(() => {});
+      return !prev;
+    });
+  };
   const nutrition = useNutritionStore();
   const nutritionHydrated = nutrition.hydrated;
   const { sessions: workoutSessions } = useWorkoutSessionStore();
@@ -102,6 +148,7 @@ export default function HomeScreen() {
     recipeStore.hydrate();
     workoutStore.hydrate();
     workoutSessionStore.hydrate();
+    exerciseStore.hydrate();
   }, []);
 
   // Load user-specific 1RM data when user changes
@@ -122,15 +169,9 @@ export default function HomeScreen() {
     loadOneRepMaxes();
   }, [userHydrated]);
 
-  const convertWeight = (kg: number) => {
-    return Math.round(kg * 2.20462 * 10) / 10; // Always convert to lbs
-  };
-
   const handleEditWeight = () => {
-    // Show the weight in lbs
     if (profile?.weightKg) {
-      const displayWeight = (profile.weightKg * 2.20462).toFixed(1);
-      setNewWeight(displayWeight);
+      setNewWeight(kgToDisplay(profile.weightKg, units).toFixed(1));
     } else {
       setNewWeight('');
     }
@@ -140,8 +181,7 @@ export default function HomeScreen() {
   const handleSaveWeight = () => {
     const weight = parseFloat(newWeight);
     if (!isNaN(weight) && weight > 0 && profile) {
-      // Convert lbs to kg for storage
-      const weightKg = weight / 2.20462;
+      const weightKg = displayToKg(weight, units);
       userStore.setProfile({
         ...profile,
         weightKg: weightKg,
@@ -221,9 +261,9 @@ export default function HomeScreen() {
   const handleWorkoutComplete = (session: WorkoutSession) => {
     // Calculate workout stats
     const sets = session.loggedSets || [];
-    const totalVolume = sets.reduce((sum, s) => sum + (s.weight * (s.reps || 1)), 0) || 0;
+    const totalVolume = sets.reduce((sum, s) => sum + loadIn(s.weight, s.unit as WeightUnit, 'imperial') * (s.reps || 1), 0) || 0;
     const totalTime = (session.endTime && session.startTime) ? Math.round((session.endTime - session.startTime) / 1000) : 0;
-    // XP: 1 per set, +1 per 100kg/lbs volume, +1 per 2 min
+    // XP: 1 per set, +1 per 100 lbs volume, +1 per 2 min
     let xp = sets.length + Math.floor(totalVolume / 100) + Math.floor(totalTime / 120);
     
     // Add 500 XP bonus for completing the daily challenge
@@ -316,6 +356,13 @@ export default function HomeScreen() {
                   <Text style={styles.workoutDesc}>Build your perfect routine with exercises, sets, reps & rest times</Text>
                 </View>
               </TouchableOpacity>
+              <TouchableOpacity style={styles.workoutOption} onPress={() => setImportVisible(true)}>
+                <Text style={styles.workoutEmoji}>📥</Text>
+                <View style={styles.workoutInfo}>
+                  <Text style={styles.workoutTitle}>Import a Workout</Text>
+                  <Text style={styles.workoutDesc}>Paste text, use a Google Doc or Sheet link, or upload a .txt or .csv file</Text>
+                </View>
+              </TouchableOpacity>
             </View>
 
             {/* Custom Workouts */}
@@ -343,7 +390,14 @@ export default function HomeScreen() {
 
             {/* Recommended for Your Goal */}
             <View style={styles.workoutSection}>
-              <Text style={styles.sectionTitle}>Recommended for You</Text>
+              <View style={styles.sectionTitleRow}>
+                <Text style={styles.sectionTitle}>Recommended for You</Text>
+                <TouchableOpacity onPress={toggleRecommended} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.tipToggle}>{showRecommended ? 'Hide' : 'Show'}</Text>
+                </TouchableOpacity>
+              </View>
+              {showRecommended && (
+              <>
               <Text style={styles.sectionSubtitle}>
                 {goal === 'weight-loss' 
                   ? 'Cardio and endurance workouts to maximize fat burn'
@@ -358,84 +412,77 @@ export default function HomeScreen() {
                   <WorkoutCard
                     workout={workout}
                     onStart={() => setActiveWorkout(workout)}
+                    onEdit={openWorkoutEditor}
                     isSaved={workoutState.savedWorkouts.some((w: Workout) => w.id === workout.id)}
                     onSave={() => workoutStore.saveWorkoutToFavorites(workout)}
                     onUnsave={() => workoutStore.unsaveWorkout(workout.id)}
                   />
                 </View>
               ))}
+              </>
+              )}
             </View>
 
             {/* Full Workout Catalog */}
             <View style={styles.workoutSection}>
               <Text style={styles.sectionTitle}>Complete Workout Catalog</Text>
-              <Text style={styles.sectionSubtitle}>Tap a category to view workouts</Text>
-              <View style={styles.categoryBoxGrid}>
-                {Object.entries(workoutCatalog).map(([categoryKey, workouts]) => {
-                  // Normalize category key for display and description
-                  const displayName = categoryDisplayNames[categoryKey] || categoryKey;
-                  const description = categoryDescriptions[categoryKey] || '';
-                  // Emoji mapping
-                  const emojiMap: { [key: string]: string } = {
-                    athletic: '🏆',
-                    cardio: '🏃',
-                    hypertrophy: '💪',
-                    strength: '🏋️',
-                    power: '⚡',
-                    endurance: '🔄',
-                    agility: '🤸',
-                    core: '🔥',
-                    stretching: '🧘',
-                  };
-                  return workouts.length > 0 && (
+              <Text style={styles.sectionSubtitle}>Tap a category to see its workouts</Text>
+              {Object.entries(workoutCatalog).map(([categoryKey, workouts]) => {
+                if (workouts.length === 0) return null;
+                const isOpen = expandedCategory === categoryKey;
+                const emojiMap: { [key: string]: string } = {
+                  athletic: '🏆',
+                  cardio: '🏃',
+                  hypertrophy: '💪',
+                  strength: '🏋️',
+                  power: '⚡',
+                  endurance: '🔄',
+                  agility: '🤸',
+                  core: '🔥',
+                  stretching: '🧘',
+                };
+                return (
+                  <View key={categoryKey} style={[styles.catalogItem, isOpen && styles.catalogItemOpen]}>
                     <TouchableOpacity
-                      key={categoryKey}
-                      style={[
-                        styles.categoryBox,
-                        expandedCategory === categoryKey && styles.categoryBoxActive,
-                      ]}
-                      onPress={() => setExpandedCategory(expandedCategory === categoryKey ? null : categoryKey)}
+                      style={styles.catalogRow}
+                      onPress={() => setExpandedCategory(isOpen ? null : categoryKey)}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: isOpen }}
                     >
-                      <Text style={styles.categoryBoxEmoji}>{emojiMap[categoryKey] || '🎯'}</Text>
-                      <Text style={[
-                        styles.categoryBoxText,
-                        expandedCategory === categoryKey && styles.categoryBoxTextActive,
-                      ]}>{displayName}</Text>
-                      <Text style={styles.categoryBoxCount}>{workouts.length} workouts</Text>
-                      {/* Always show description for every category, styled for clarity */}
-                      <View style={{ marginTop: 6, marginBottom: 2 }}>
-                        <Text style={{ fontSize: 13, color: '#444', lineHeight: 18 }}>{description}</Text>
+                      <View style={styles.catalogEmojiWrap}>
+                        <Text style={styles.catalogEmoji}>{emojiMap[categoryKey] || '🎯'}</Text>
                       </View>
+                      <View style={styles.catalogText}>
+                        <Text style={[styles.catalogName, isOpen && styles.catalogNameOpen]}>
+                          {categoryDisplayNames[categoryKey] || categoryKey}
+                        </Text>
+                        <Text style={styles.catalogCount}>
+                          {workouts.length} {workouts.length === 1 ? 'workout' : 'workouts'}
+                        </Text>
+                        {categoryDescriptions[categoryKey] ? (
+                          <Text style={styles.catalogDescription}>{categoryDescriptions[categoryKey]}</Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.catalogChevron}>{isOpen ? '▾' : '▸'}</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Expanded Category Workouts */}
-              {expandedCategory && workoutCatalog[expandedCategory] && (
-                <View style={styles.expandedCategorySection}>
-                  <View style={styles.expandedCategoryHeader}>
-                    <Text style={styles.expandedCategoryTitle}>{categoryDisplayNames[expandedCategory] || expandedCategory}</Text>
-                    <TouchableOpacity onPress={() => setExpandedCategory(null)}>
-                      <Text style={styles.closeExpandedButton}>✕</Text>
-                    </TouchableOpacity>
+                    {isOpen && (
+                      <View style={styles.catalogWorkouts}>
+                        {workouts.map((workout) => (
+                          <WorkoutCard
+                            key={workout.id}
+                            workout={workout}
+                            onStart={() => setActiveWorkout(workout)}
+                            onEdit={openWorkoutEditor}
+                            isSaved={workoutState.savedWorkouts.some((w: Workout) => w.id === workout.id)}
+                            onSave={() => workoutStore.saveWorkoutToFavorites(workout)}
+                            onUnsave={() => workoutStore.unsaveWorkout(workout.id)}
+                          />
+                        ))}
+                      </View>
+                    )}
                   </View>
-                  <Text style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-                    {categoryDescriptions[expandedCategory] || ''}
-                  </Text>
-                  {workoutCatalog[expandedCategory].map((workout) => (
-                    <View key={workout.id} style={{ marginBottom: 12 }}>
-                      <WorkoutCard
-                        workout={workout}
-                        onStart={() => setActiveWorkout(workout)}
-                        isSaved={workoutState.savedWorkouts.some((w: Workout) => w.id === workout.id)}
-                        onSave={() => workoutStore.saveWorkoutToFavorites(workout)}
-                        onUnsave={() => workoutStore.unsaveWorkout(workout.id)}
-                      />
-                    </View>
-                  ))}
-                </View>
-              )}
+                );
+              })}
             </View>
           </ScrollView>
         );
@@ -444,26 +491,8 @@ export default function HomeScreen() {
         return (
           <ScrollView contentContainerStyle={styles.homeContent}>
             <View style={styles.header}>
-              <TouchableOpacity onPress={() => setAccountModalVisible(true)} style={[styles.avatar, savedAvatar && { backgroundColor: savedAvatar.bgColor || '#00B8A9' }]}>
-                {savedAvatar ? (
-                  <View style={{ alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' }}>
-                    {/* Badge in top left */}
-                    {savedAvatar.badge && (
-                      <View style={{ position: 'absolute', top: -4, left: -4, backgroundColor: '#fff', borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
-                        <Text style={{ fontSize: 12 }}>{savedAvatar.badge}</Text>
-                      </View>
-                    )}
-                    {/* Accessory in top right */}
-                    {savedAvatar.accessory && savedAvatar.accessory !== 'none' && (
-                      <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: '#fff', borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
-                        <Text style={{ fontSize: 12 }}>{savedAvatar.accessory}</Text>
-                      </View>
-                    )}
-                    <Text style={{ fontSize: 24 }}>{savedAvatar.skinEmoji || '🧑'}</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.avatarText}>{avatarInitials}</Text>
-                )}
+              <TouchableOpacity onPress={() => setAccountModalVisible(true)}>
+                <Avatar data={savedAvatar} initials={avatarInitials} size={60} />
               </TouchableOpacity>
               <View style={styles.headerText}>
                 <Text style={styles.fact}>Daily Fitness Fact</Text>
@@ -492,13 +521,13 @@ export default function HomeScreen() {
                 <TouchableOpacity onPress={handleEditWeight}>
                   <View style={styles.weightRow}>
                     <Text style={styles.weightLabel}>Current Weight</Text>
-                    <Text style={styles.weightValue}>{convertWeight(profile.weightKg).toFixed(1)} lbs</Text>
+                    <Text style={styles.weightValue}>{formatBodyWeight(profile.weightKg, units)}</Text>
                   </View>
                 </TouchableOpacity>
                 {profile.targetWeightKg && (
                   <View style={styles.weightRow}>
                     <Text style={styles.weightLabel}>Target Weight</Text>
-                    <Text style={styles.weightValue}>{convertWeight(profile.targetWeightKg).toFixed(1)} lbs</Text>
+                    <Text style={styles.weightValue}>{formatBodyWeight(profile.targetWeightKg, units)}</Text>
                   </View>
                 )}
               </View>
@@ -843,7 +872,9 @@ export default function HomeScreen() {
         allWorkoutSessions.forEach((session) => {
           (session.loggedSets || []).forEach((set: any) => {
             const name = set.exerciseName || `Exercise ${set.exerciseIndex + 1}`;
-            if (!prs[name] || set.weight > prs[name].weight) {
+            const setLbs = loadIn(set.weight, (set.unit as WeightUnit) || 'lbs', 'imperial');
+            const prLbs = prs[name] ? loadIn(prs[name].weight, prs[name].unit as WeightUnit, 'imperial') : -1;
+            if (setLbs > prLbs) {
               prs[name] = {
                 weight: set.weight,
                 reps: set.reps,
@@ -932,7 +963,7 @@ export default function HomeScreen() {
           
           const weight = parseFloat(trimmed);
           if (weight >= 0) {
-            const updated = { ...oneRepMaxes, [exercise]: weight };
+            const updated = { ...oneRepMaxes, [exercise]: loadIn(weight, wUnit, 'imperial') };
             setOneRepMaxes(updated);
             if (userId) {
               AsyncStorage.setItem(`oneRepMaxes_${userId}`, JSON.stringify(updated)).catch(() => {});
@@ -988,7 +1019,7 @@ export default function HomeScreen() {
                 <>
                   {workoutHistory.length > 0 ? (
                     <>
-                      <Text style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>{totalWorkoutsCompleted} workouts completed • {Math.round(totalVolumeLifted).toLocaleString()} lbs total volume</Text>
+                      <Text style={{ fontSize: 13, color: '#666', marginBottom: 16 }}>{totalWorkoutsCompleted} workouts completed • {Math.round(loadIn(totalVolumeLifted, 'lbs', units)).toLocaleString()} {wUnit} total volume</Text>
                       {workoutHistory.map((session, index) => {
                         const sets = session.loggedSets || [];
                         const duration = Math.round((session.totalDuration || 0) / 60000);
@@ -1022,7 +1053,7 @@ export default function HomeScreen() {
                                 <Text style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{date} at {time}</Text>
                               </View>
                               <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#4CAF50' }}>{Math.round(session.totalVolume || 0).toLocaleString()} lbs</Text>
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#4CAF50' }}>{Math.round(loadIn(session.totalVolume || 0, 'lbs', units)).toLocaleString()} {wUnit}</Text>
                               </View>
                             </View>
                             <View style={{ flexDirection: 'row', gap: 16, justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1082,10 +1113,17 @@ export default function HomeScreen() {
                             keyboardType="numeric"
                             placeholder="--"
                             placeholderTextColor="#999"
-                            value={oneRepMaxes[exercise] ? oneRepMaxes[exercise].toString() : ''}
-                            onChangeText={(val) => handleSaveOneRepMax(exercise, val)}
+                            value={
+                              oneRepDrafts[exercise] ??
+                              (oneRepMaxes[exercise] ? String(Math.round(loadIn(oneRepMaxes[exercise], 'lbs', units) * 10) / 10) : '')
+                            }
+                            onChangeText={(val) => {
+                              setOneRepDrafts((d) => ({ ...d, [exercise]: val }));
+                              handleSaveOneRepMax(exercise, val);
+                            }}
+                            onEndEditing={() => setOneRepDrafts(({ [exercise]: _, ...rest }) => rest)}
                           />
-                          <Text style={{ fontSize: 14, color: '#666' }}>lbs</Text>
+                          <Text style={{ fontSize: 14, color: '#666' }}>{wUnit}</Text>
                         </View>
                       </View>
                     ))}
@@ -1107,7 +1145,7 @@ export default function HomeScreen() {
                             borderColor: '#FFE082'
                           }}>
                             <Text style={{ fontSize: 13, fontWeight: '700', color: '#333', marginBottom: 6 }} numberOfLines={1}>{exerciseName}</Text>
-                            <Text style={{ fontSize: 22, fontWeight: '800', color: '#F59E0B' }}>{pr.weight} {pr.unit}</Text>
+                            <Text style={{ fontSize: 22, fontWeight: '800', color: '#F59E0B' }}>{convertLoad(pr.weight, pr.unit as WeightUnit, wUnit)} {wUnit}</Text>
                             <Text style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{pr.reps} reps • {new Date(pr.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</Text>
                           </View>
                         ))}
@@ -1144,7 +1182,7 @@ export default function HomeScreen() {
                             paddingLeft: 10
                           }}>
                             {week.volume > 0 && (
-                              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(week.volume).toLocaleString()} lbs</Text>
+                              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(loadIn(week.volume, 'lbs', units)).toLocaleString()} {wUnit}</Text>
                             )}
                           </View>
                         </View>
@@ -1245,6 +1283,7 @@ export default function HomeScreen() {
                     key={workout.id}
                     workout={workout}
                     onStart={() => setActiveWorkout(workout)}
+                    onEdit={openWorkoutEditor}
                     isSaved={true}
                     onUnsave={() => workoutStore.unsaveWorkout(workout.id)}
                   />
@@ -1422,8 +1461,8 @@ export default function HomeScreen() {
                     <Text style={{ fontSize: 12, color: '#666' }}>Sets Logged</Text>
                   </View>
                   <View style={{ width: '48%', backgroundColor: '#F5F5F5', borderRadius: 10, padding: 14, alignItems: 'center' }}>
-                    <Text style={{ fontSize: 22, fontWeight: '700', color: '#00B8A9' }}>{Math.round(workoutSummary.totalVolume)}</Text>
-                    <Text style={{ fontSize: 12, color: '#666' }}>Total Volume</Text>
+                    <Text style={{ fontSize: 22, fontWeight: '700', color: '#00B8A9' }}>{Math.round(loadIn(workoutSummary.totalVolume, 'lbs', units))}</Text>
+                    <Text style={{ fontSize: 12, color: '#666' }}>Total Volume ({wUnit})</Text>
                   </View>
                   <View style={{ width: '48%', backgroundColor: '#F5F5F5', borderRadius: 10, padding: 14, alignItems: 'center' }}>
                     <Text style={{ fontSize: 22, fontWeight: '700', color: '#00B8A9' }}>
@@ -1504,7 +1543,7 @@ export default function HomeScreen() {
               value={newWeight}
               onChangeText={setNewWeight}
               keyboardType="decimal-pad"
-              placeholder="Enter weight (lbs)"
+              placeholder={`Enter weight (${wUnit})`}
               placeholderTextColor="#999"
               autoFocus
             />
@@ -1643,10 +1682,33 @@ export default function HomeScreen() {
       <WorkoutBuilder
         visible={workoutBuilderVisible}
         initialWorkout={editingWorkout || undefined}
+        heading={builderHeading}
+        notice={builderNotice}
         onSave={handleSaveWorkout}
         onClose={() => {
           setWorkoutBuilderVisible(false);
           setEditingWorkout(null);
+          setBuilderHeading(undefined);
+          setBuilderNotice(undefined);
+        }}
+      />
+
+      <ImportWorkoutModal
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        onImport={(draft) => {
+          setImportVisible(false);
+          // iOS can't present a modal while another is still dismissing
+          setTimeout(() => {
+            setBuilderHeading('Review Imported Workout');
+            setBuilderNotice(
+              draft.exercises.some((e) => e.exerciseId.startsWith('import-'))
+                ? 'Exercises that weren’t in the library will be added to your exercises when you save.'
+                : undefined
+            );
+            setEditingWorkout(draft);
+            setWorkoutBuilderVisible(true);
+          }, 400);
         }}
       />
 
@@ -1677,6 +1739,24 @@ interface NutritionTabProps {
 }
 
 function NutritionTab({ nutrition, profile, goal }: NutritionTabProps) {
+  const units = useUnits();
+  // "Why it matters" tips start visible; each one can be hidden and is remembered per user
+  const [tipsVisible, setTipsVisible] = useState({ water: true, sleep: true });
+  const tipsKey = `nutritionTips_${authStore.getCurrentUserId() ?? 'guest'}`;
+  useEffect(() => {
+    AsyncStorage.getItem(tipsKey)
+      .then((saved) => {
+        if (saved) setTipsVisible((prev) => ({ ...prev, ...JSON.parse(saved) }));
+      })
+      .catch(() => {});
+  }, [tipsKey]);
+  const toggleTip = (tip: 'water' | 'sleep') => {
+    setTipsVisible((prev) => {
+      const next = { ...prev, [tip]: !prev[tip] };
+      AsyncStorage.setItem(tipsKey, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  };
   const [addingMeal, setAddingMeal] = useState(false);
   const [mealName, setMealName] = useState('');
   const [mealCalories, setMealCalories] = useState('');
@@ -1765,7 +1845,8 @@ function NutritionTab({ nutrition, profile, goal }: NutritionTabProps) {
                         activity === 'Active' ? 'active lifestyle' : 
                         activity === 'Moderate' ? 'moderate activity' : 'activity level';
   
-  const proteinReason = `${proteinTarget}g (${proteinMultiplier.toFixed(1)}g per lb) - Personalized for ${activityLabel} and ${goalType.toLowerCase()} goal. ${
+  const perBodyWeight = units === 'metric' ? `${(proteinMultiplier * 2.20462).toFixed(1)}g per kg` : `${proteinMultiplier.toFixed(1)}g per lb`;
+  const proteinReason = `${proteinTarget}g (${perBodyWeight}) - Personalized for ${activityLabel} and ${goalType.toLowerCase()} goal. ${
     goalType === 'Build muscle' ? 'Higher protein supports muscle growth.' : 
     goalType === 'Lose fat' ? 'Higher protein preserves muscle during fat loss.' : 
     'Adequate protein maintains muscle mass.'
@@ -2076,10 +2157,17 @@ function NutritionTab({ nutrition, profile, goal }: NutritionTabProps) {
 
       {/* Water Tracker */}
       <View style={styles.trackerSection}>
-        <Text style={styles.sectionTitle}>Water Intake</Text>
-        <View style={styles.waterInfoBox}>
-          <Text style={styles.infoText}>💧 <Text style={styles.infoBold}>Why Water Matters:</Text> Proper hydration boosts metabolism, aids digestion, and enhances workout performance. Aim for 8 glasses daily—adjust based on activity level and climate.</Text>
+        <View style={styles.sectionTitleRow}>
+          <Text style={styles.sectionTitle}>Water Intake</Text>
+          <TouchableOpacity onPress={() => toggleTip('water')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.tipToggle}>{tipsVisible.water ? 'Hide' : 'Why it matters'}</Text>
+          </TouchableOpacity>
         </View>
+        {tipsVisible.water && (
+          <View style={styles.waterInfoBox}>
+            <Text style={styles.infoText}>💧 <Text style={styles.infoBold}>Why Water Matters:</Text> Proper hydration boosts metabolism, aids digestion, and enhances workout performance. Aim for 8 glasses daily—adjust based on activity level and climate.</Text>
+          </View>
+        )}
         <View style={styles.trackerRow}>
           <View style={styles.trackerDisplay}>
             <Text style={styles.trackerValue}>{glassesCount}</Text>
@@ -2120,10 +2208,17 @@ function NutritionTab({ nutrition, profile, goal }: NutritionTabProps) {
 
       {/* Sleep Tracker */}
       <View style={styles.trackerSection}>
-        <Text style={styles.sectionTitle}>Sleep Last Night</Text>
-        <View style={styles.sleepInfoBox}>
-          <Text style={styles.infoText}>😴 <Text style={styles.infoBold}>Why Sleep Matters:</Text> Quality sleep supports muscle recovery, reduces cravings, and optimizes hormone balance. Most adults need 7-9 hours nightly for peak fitness performance.</Text>
+        <View style={styles.sectionTitleRow}>
+          <Text style={styles.sectionTitle}>Sleep Last Night</Text>
+          <TouchableOpacity onPress={() => toggleTip('sleep')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.tipToggle}>{tipsVisible.sleep ? 'Hide' : 'Why it matters'}</Text>
+          </TouchableOpacity>
         </View>
+        {tipsVisible.sleep && (
+          <View style={styles.sleepInfoBox}>
+            <Text style={styles.infoText}>😴 <Text style={styles.infoBold}>Why Sleep Matters:</Text> Quality sleep supports muscle recovery, reduces cravings, and optimizes hormone balance. Most adults need 7-9 hours nightly for peak fitness performance.</Text>
+          </View>
+        )}
         <View style={styles.trackerRow}>
           <View style={{ position: 'relative' }}>
             <TouchableOpacity onPress={handleEditSleep} style={styles.trackerDisplay}>
@@ -2590,6 +2685,78 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#1A1A1A',
   },
+  catalogItem: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    overflow: 'hidden',
+  },
+  catalogItemOpen: {
+    borderColor: '#00B8A9',
+  },
+  catalogRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    gap: 12,
+  },
+  catalogEmojiWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F0FBFA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  catalogEmoji: {
+    fontSize: 22,
+  },
+  catalogText: {
+    flex: 1,
+    gap: 2,
+  },
+  catalogName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  catalogNameOpen: {
+    color: '#00B8A9',
+  },
+  catalogCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#00B8A9',
+  },
+  catalogDescription: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  catalogChevron: {
+    fontSize: 18,
+    color: '#999',
+  },
+  catalogWorkouts: {
+    paddingHorizontal: 12,
+    paddingBottom: 4,
+    backgroundColor: '#F7F9F9',
+    borderTopWidth: 1,
+    borderTopColor: '#E8F0EF',
+    paddingTop: 12,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  tipToggle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#00B8A9',
+  },
 
   challengeCard: {
     backgroundColor: '#FFF',
@@ -2810,29 +2977,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
-  },
-  categoryBox: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 14,
-    margin: 6,
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
-    minWidth: 120,
-    maxWidth: 220,
-    flex: 1,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    borderWidth: 1,
-    borderColor: '#eee',
-    transitionProperty: 'box-shadow',
-    transitionDuration: '0.2s',
-    flexDirection: 'column',
-    flexWrap: 'wrap',
-    minHeight: 160,
   },
   infoBold: {
     fontWeight: '700',
@@ -3211,56 +3355,6 @@ const styles = StyleSheet.create({
     color: '#00B8A9',
     marginBottom: 12,
     textTransform: 'capitalize',
-  },
-  categoryBoxGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 12,
-  },
-  categoryBoxActive: {
-    backgroundColor: '#E8F5F5',
-    borderColor: '#00B8A9',
-  },
-  categoryBoxEmoji: {
-    fontSize: 32,
-  },
-  categoryBoxText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    textAlign: 'center',
-  },
-  categoryBoxTextActive: {
-    color: '#00B8A9',
-  },
-  categoryBoxCount: {
-    fontSize: 11,
-    color: '#888',
-  },
-  expandedCategorySection: {
-    marginTop: 20,
-    padding: 16,
-    backgroundColor: '#F9F9F9',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#00B8A9',
-  },
-  expandedCategoryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  expandedCategoryTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#00B8A9',
-  },
-  closeExpandedButton: {
-    fontSize: 24,
-    color: '#666',
-    fontWeight: '300',
   },
   workoutOption: {
     backgroundColor: '#FFF',

@@ -8,7 +8,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ModalSafeArea } from '@/components/modal-safe-area';
 import { Exercise } from '../lib/exercises';
 
 type CustomExerciseModalProps = {
@@ -136,7 +136,7 @@ export default function CustomExerciseModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+      <ModalSafeArea style={{ flex: 1, backgroundColor: '#FFF' }}>
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose}>
@@ -303,7 +303,7 @@ export default function CustomExerciseModal({
           <Text style={styles.saveButtonText}>💾 Save Exercise</Text>
         </TouchableOpacity>
       </ScrollView>
-      </SafeAreaView>
+      </ModalSafeArea>
     </Modal>
   );
 }

@@ -2,107 +2,110 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { calculateCalories, userStore } from '../lib/userStore';
+import { ACTIVITY_LEVELS, ActivityGuide } from '@/components/activity-guide';
+import { UnitToggle } from '@/components/unit-toggle';
+import { cmToFeetInches, displayToKg, feetInchesToCm, getUnits, kgToDisplay, UnitSystem, weightUnitFor } from '../lib/units';
+import { calculateBMR, calculateCalories, getActivityMultiplier, userStore } from '../lib/userStore';
 
 const genders = ['Male', 'Female', 'Other'];
-const activities = ['Sedentary', 'Light (1–3x/week)', 'Moderate (3–5x/week)', 'Very Active (5–7x/week)'];
+const activities = ACTIVITY_LEVELS.map((l) => l.value);
 const goals = ['weight-loss', 'muscle-gain', 'performance', 'recomposition'];
 
 export default function ProfileScreen() {
+  const [units, setUnitsLocal] = useState<UnitSystem>(getUnits());
   const [age, setAge] = useState('');
   const [gender, setGender] = useState('');
   const [heightFt, setHeightFt] = useState('');
   const [heightIn, setHeightIn] = useState('');
-  const [weightLbs, setWeightLbs] = useState('');
-  const [targetWeightLbs, setTargetWeightLbs] = useState('');
+  const [heightCmText, setHeightCmText] = useState('');
+  const [weight, setWeight] = useState('');
+  const [targetWeight, setTargetWeight] = useState('');
   const [activity, setActivity] = useState('');
+  const [activityGuideVisible, setActivityGuideVisible] = useState(false);
   const [targetDays, setTargetDays] = useState('');
   const [calculatedCalories, setCalculatedCalories] = useState<number | null>(null);
   const [debugMsg, setDebugMsg] = useState('');
   const [targetWeightError, setTargetWeightError] = useState('');
   const router = useRouter();
 
-  // Get the goal from userStore that was set in the goal screen
   const goal = userStore.getState().goal || 'weight-loss';
+  const wUnit = weightUnitFor(units);
 
-  // Validation helpers
+  // Everything below works in metric (cm / kg) regardless of what the user typed in.
+  const heightCm =
+    units === 'metric'
+      ? parseFloat(heightCmText)
+      : heightFt
+        ? feetInchesToCm(parseInt(heightFt), parseInt(heightIn || '0'))
+        : NaN;
+  const weightKg = weight ? displayToKg(parseFloat(weight), units) : NaN;
+  const targetWeightKg = targetWeight ? displayToKg(parseFloat(targetWeight), units) : NaN;
+
+  const switchUnits = (next: UnitSystem) => {
+    if (next === units) return;
+    if (next === 'metric') {
+      if (!isNaN(heightCm)) setHeightCmText(String(Math.round(heightCm)));
+    } else if (!isNaN(heightCm)) {
+      const { ft, inch } = cmToFeetInches(heightCm);
+      setHeightFt(String(ft));
+      setHeightIn(String(inch));
+    }
+    if (!isNaN(weightKg)) setWeight(kgToDisplay(weightKg, next).toFixed(next === 'metric' ? 1 : 0));
+    if (!isNaN(targetWeightKg)) setTargetWeight(kgToDisplay(targetWeightKg, next).toFixed(next === 'metric' ? 1 : 0));
+    setUnitsLocal(next);
+  };
+
   const isValidHeight = () => {
+    if (units === 'metric') return heightCm > 90 && heightCm < 245;
     const ft = parseInt(heightFt);
     const inch = parseInt(heightIn || '0');
     return ft > 0 && ft < 8 && inch >= 0 && inch < 12;
   };
-  const isValidWeight = () => {
-    const w = parseInt(weightLbs);
-    return w > 50 && w < 700;
-  };
-  const isValidTargetWeight = () => {
-    const w = parseInt(targetWeightLbs);
-    return w > 50 && w < 700;
-  };
+  // 50–700 lbs ≈ 23–318 kg
+  const isValidKg = (kg: number) => kg > 22.6 && kg < 318;
+  const isValidWeight = () => isValidKg(weightKg);
+  const isValidTargetWeight = () => isValidKg(targetWeightKg);
   const isGoalWeightAligned = () => {
-    const w = parseInt(weightLbs);
-    const tw = parseInt(targetWeightLbs);
-    if (!weightLbs || !targetWeightLbs || isNaN(w) || isNaN(tw)) return true;
-    if (goal === 'weight-loss') return tw < w;
-    if (goal === 'muscle-gain' || goal === 'weight-gain') return tw > w;
-    if (goal === 'recomposition') return tw !== w;
+    if (isNaN(weightKg) || isNaN(targetWeightKg)) return true;
+    if (goal === 'weight-loss') return targetWeightKg < weightKg;
+    if (goal === 'muscle-gain' || goal === 'weight-gain') return targetWeightKg > weightKg;
+    if (goal === 'recomposition') return targetWeightKg !== weightKg;
     return true;
   };
-  const canContinue = age && gender && heightFt && weightLbs && targetWeightLbs && activity && targetDays && isValidHeight() && isValidWeight() && isValidTargetWeight() && isGoalWeightAligned();
+  const hasHeight = units === 'metric' ? !!heightCmText : !!heightFt;
+  const canContinue = !!(age && gender && hasHeight && weight && targetWeight && activity && targetDays && isValidHeight() && isValidWeight() && isValidTargetWeight() && isGoalWeightAligned());
+
   const isUnrealisticGoal = () => {
-    const w = parseInt(weightLbs);
-    const tw = parseInt(targetWeightLbs);
     const days = parseInt(targetDays);
-    if (!weightLbs || !targetWeightLbs || !targetDays || isNaN(w) || isNaN(tw) || isNaN(days) || days < 1) return false;
-    const poundsToLose = w - tw;
-    const poundsToGain = tw - w;
+    if (isNaN(weightKg) || isNaN(targetWeightKg) || isNaN(days) || days < 1) return false;
     // Safe rate: max 2 lbs/week for loss, 1.5 lbs/week for gain
+    const diffLbs = (targetWeightKg - weightKg) * 2.20462;
     const weeks = days / 7;
-    if (goal === 'weight-loss' && poundsToLose > 0) {
-      const rate = poundsToLose / weeks;
-      return rate > 2;
-    }
-    if ((goal === 'muscle-gain' || goal === 'weight-gain') && poundsToGain > 0) {
-      const rate = poundsToGain / weeks;
-      return rate > 1.5;
-    }
+    if (goal === 'weight-loss' && diffLbs < 0) return -diffLbs / weeks > 2;
+    if ((goal === 'muscle-gain' || goal === 'weight-gain') && diffLbs > 0) return diffLbs / weeks > 1.5;
     return false;
   };
 
   useEffect(() => {
-    // Live error for target weight/goal alignment
-    const w = parseInt(weightLbs);
-    const tw = parseInt(targetWeightLbs);
     let error = '';
-    if (weightLbs && targetWeightLbs && !isNaN(w) && !isNaN(tw)) {
-      if (goal === 'weight-loss' && tw >= w) {
+    if (!isNaN(weightKg) && !isNaN(targetWeightKg)) {
+      if (goal === 'weight-loss' && targetWeightKg >= weightKg) {
         error = 'For weight loss, your target weight must be less than your current weight.';
-      } else if ((goal === 'muscle-gain' || goal === 'weight-gain') && tw <= w) {
+      } else if ((goal === 'muscle-gain' || goal === 'weight-gain') && targetWeightKg <= weightKg) {
         error = 'For muscle/weight gain, your target weight must be greater than your current weight.';
-      } else if (goal === 'recomposition' && tw === w) {
+      } else if (goal === 'recomposition' && targetWeightKg === weightKg) {
         error = 'For body recomposition, your target weight should differ from your current weight.';
       }
     }
     setTargetWeightError(error);
     if (canContinue) {
-      const heightCm = parseInt(heightFt) * 30.48 + (parseInt(heightIn || '0') * 2.54);
-      const weightKg = parseInt(weightLbs) * 0.453592;
-      const targetWeightKg = parseInt(targetWeightLbs) * 0.453592;
-      const calories = calculateCalories(
-        weightKg,
-        heightCm,
-        parseInt(age),
-        gender,
-        activity,
-        goal,
-        targetWeightKg,
-        parseInt(targetDays)
+      setCalculatedCalories(
+        calculateCalories(weightKg, heightCm, parseInt(age), gender, activity, goal, targetWeightKg, parseInt(targetDays))
       );
-      setCalculatedCalories(calories);
     } else {
       setCalculatedCalories(null);
     }
-  }, [age, gender, heightFt, heightIn, weightLbs, targetWeightLbs, activity, goal, targetDays, canContinue]);
+  }, [age, gender, heightCm, weightKg, targetWeightKg, activity, goal, targetDays, canContinue]);
 
   const getGoalLabel = (selectedGoal: string): string => {
     switch (selectedGoal) {
@@ -119,63 +122,24 @@ export default function ProfileScreen() {
     }
   };
 
-  const getGoalContext = (selectedGoal: string, calories: number): string => {
-    // Calculate the actual surplus/deficit for all goals, using target weight if provided
-    const w = parseInt(weightLbs);
-    const tw = parseInt(targetWeightLbs);
-    const hFt = parseInt(heightFt);
-    const hIn = parseInt(heightIn || '0');
-    const hCm = hFt * 30.48 + hIn * 2.54;
+  const getGoalContext = (calories: number): string => {
     const a = parseInt(age);
-    const g = gender;
-    const act = activity;
     const days = parseInt(targetDays);
-    if (!w || !hCm || !a || !g || !act) return '';
-    const weightKg = w * 0.453592;
-    const targetWeightKg = tw * 0.453592;
-    // Calculate BMR
-    let bmr = 0;
-    if (g === 'Female') {
-      bmr = 10 * weightKg + 6.25 * hCm - 5 * a - 161;
-    } else {
-      bmr = 10 * weightKg + 6.25 * hCm - 5 * a + 5;
-    }
-    // Activity multiplier
-    let activityMultiplier = 1.2;
-    switch (act) {
-      case 'Sedentary': activityMultiplier = 1.2; break;
-      case 'Light (1–3x/week)': activityMultiplier = 1.375; break;
-      case 'Moderate (3–5x/week)': activityMultiplier = 1.55; break;
-      case 'Very Active (5–7x/week)': activityMultiplier = 1.725; break;
-    }
-    const tdee = bmr * activityMultiplier;
-    // If no target weight or days, just show maintenance/surplus/deficit from current
-    if (!tw || !days || tw === w) {
+    if (isNaN(weightKg) || isNaN(heightCm) || !a || !gender || !activity) return '';
+    const bmr = calculateBMR(weightKg, heightCm, a, gender);
+    const tdee = bmr * getActivityMultiplier(activity);
+    if (isNaN(targetWeightKg) || !days || targetWeightKg === weightKg) {
       const diff = Math.round(calories - tdee);
-      if (diff === 0) {
-        return 'Maintenance';
-      } else if (diff < 0) {
-        return `${Math.abs(diff)} cal deficit`;
-      } else {
-        return `${diff} cal surplus`;
-      }
+      if (diff === 0) return 'Maintenance';
+      return diff < 0 ? `${Math.abs(diff)} cal deficit` : `${diff} cal surplus`;
     }
-    // If target weight and days are set, show the actual daily adjustment
-    const weightDifferenceKg = targetWeightKg - weightKg;
-    const totalCalorieDifference = weightDifferenceKg * 7700;
-    const dailyAdjustment = Math.round(totalCalorieDifference / days);
-    if (dailyAdjustment === 0) {
-      return 'Maintenance';
-    } else if (dailyAdjustment < 0) {
-      return `${Math.abs(dailyAdjustment)} cal deficit`;
-    } else {
-      return `${dailyAdjustment} cal surplus`;
-    }
+    const dailyAdjustment = Math.round(((targetWeightKg - weightKg) * 7700) / days);
+    if (dailyAdjustment === 0) return 'Maintenance';
+    return dailyAdjustment < 0 ? `${Math.abs(dailyAdjustment)} cal deficit` : `${dailyAdjustment} cal surplus`;
   };
 
   const onContinue = async () => {
-    // Validation error messages
-    if (!age || !gender || !heightFt || !weightLbs || !targetWeightLbs || !activity || !targetDays) {
+    if (!age || !gender || !hasHeight || !weight || !targetWeight || !activity || !targetDays) {
       setDebugMsg('Please fill out all fields.');
       return;
     }
@@ -185,11 +149,11 @@ export default function ProfileScreen() {
       return;
     }
     if (!isValidHeight()) {
-      setDebugMsg('Please enter a realistic height (ft < 8, in < 12).');
+      setDebugMsg(units === 'metric' ? 'Please enter a realistic height (90–245 cm).' : 'Please enter a realistic height (ft < 8, in < 12).');
       return;
     }
     if (!isValidWeight() || !isValidTargetWeight()) {
-      setDebugMsg('Please enter a realistic weight (50-700 lbs).');
+      setDebugMsg(units === 'metric' ? 'Please enter a realistic weight (23–318 kg).' : 'Please enter a realistic weight (50–700 lbs).');
       return;
     }
     if (!isGoalWeightAligned()) {
@@ -205,40 +169,42 @@ export default function ProfileScreen() {
       return;
     }
     if (isUnrealisticGoal()) {
-      setDebugMsg('Your goal is too aggressive. Please choose a safer rate (max 2 lbs/week for loss, 1.5 lbs/week for gain).');
+      setDebugMsg(
+        units === 'metric'
+          ? 'Your goal is too aggressive. Please choose a safer rate (max 0.9 kg/week for loss, 0.7 kg/week for gain).'
+          : 'Your goal is too aggressive. Please choose a safer rate (max 2 lbs/week for loss, 1.5 lbs/week for gain).'
+      );
       return;
     }
     setDebugMsg('');
-    const heightCm = (parseInt(heightFt) * 30.48 + (parseInt(heightIn || '0') * 2.54)).toFixed(0);
-    const weightKg = (parseInt(weightLbs) * 0.453592).toFixed(1);
-    const targetWeightKg = (parseInt(targetWeightLbs) * 0.453592).toFixed(1);
-    
-    console.log('🟢 Setting profile:', { heightCm, weightKg, targetWeightKg });
+
     userStore.setProfile({
-      age: parseInt(age),
+      age: ageNum,
       gender,
-      heightCm: parseFloat(heightCm),
-      weightKg: parseFloat(weightKg),
-      targetWeightKg: parseFloat(targetWeightKg),
+      heightCm: Math.round(heightCm),
+      weightKg: Math.round(weightKg * 10) / 10,
+      targetWeightKg: Math.round(targetWeightKg * 10) / 10,
       activity,
       targetDays: parseInt(targetDays),
+      units,
     });
-    
-    console.log('🟢 Completing onboarding...');
+
     userStore.completeOnboarding();
-    
-    // Wait longer for the database save to complete
+
+    // Wait for the database save to complete
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Force re-hydrate to confirm data was saved
     await userStore.hydrate(true);
-    const finalState = userStore.getState();
-    console.log('🟢 After re-hydrate, state:', finalState);
-    
-    // Navigate to home
+
     router.replace('/(tabs)');
   };
 
+  const numericInputProps = {
+    placeholderTextColor: '#888',
+    autoComplete: 'off' as const,
+    textContentType: 'oneTimeCode' as const,
+    autoCorrect: false,
+    spellCheck: false,
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#E8E8E8' }} edges={['top', 'bottom']}>
@@ -253,21 +219,15 @@ export default function ProfileScreen() {
 
         {debugMsg ? <Text style={styles.debugMsg}>{debugMsg}</Text> : null}
 
+        <View style={styles.selectorBlock}>
+          <Text style={styles.label}>Units</Text>
+          <UnitToggle value={units} onChange={switchUnits} />
+        </View>
+
         <View style={styles.row}>
           <View style={styles.inputBlock}>
             <Text style={styles.label}>Age</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="25"
-              placeholderTextColor="#888"
-              keyboardType="number-pad"
-              value={age}
-              onChangeText={setAge}
-              autoComplete="off"
-              textContentType="oneTimeCode"
-              autoCorrect={false}
-              spellCheck={false}
-            />
+            <TextInput style={styles.input} placeholder="25" keyboardType="number-pad" value={age} onChangeText={setAge} {...numericInputProps} />
           </View>
         </View>
 
@@ -286,71 +246,50 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {units === 'metric' ? (
+          <View style={styles.row}>
+            <View style={styles.inputBlock}>
+              <Text style={styles.label}>Height (cm)</Text>
+              <TextInput style={styles.input} placeholder="178" keyboardType="number-pad" value={heightCmText} onChangeText={setHeightCmText} {...numericInputProps} />
+            </View>
+          </View>
+        ) : (
+          <View style={styles.row}>
+            <View style={styles.inputBlock}>
+              <Text style={styles.label}>Height (ft)</Text>
+              <TextInput style={styles.input} placeholder="5" keyboardType="number-pad" value={heightFt} onChangeText={setHeightFt} {...numericInputProps} />
+            </View>
+            <View style={styles.inputBlock}>
+              <Text style={styles.label}>In</Text>
+              <TextInput style={styles.input} placeholder="10" keyboardType="number-pad" value={heightIn} onChangeText={setHeightIn} {...numericInputProps} />
+            </View>
+          </View>
+        )}
+
         <View style={styles.row}>
           <View style={styles.inputBlock}>
-            <Text style={styles.label}>Height (ft)</Text>
+            <Text style={styles.label}>Current Weight ({wUnit})</Text>
             <TextInput
               style={styles.input}
-              placeholder="5"
-              placeholderTextColor="#888"
-              keyboardType="number-pad"
-              value={heightFt}
-              onChangeText={setHeightFt}
-              autoComplete="off"
-              textContentType="oneTimeCode"
-              autoCorrect={false}
-              spellCheck={false}
-            />
-          </View>
-          <View style={styles.inputBlock}>
-            <Text style={styles.label}>In</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="10"
-              placeholderTextColor="#888"
-              keyboardType="number-pad"
-              value={heightIn}
-              onChangeText={setHeightIn}
-              autoComplete="off"
-              textContentType="oneTimeCode"
-              autoCorrect={false}
-              spellCheck={false}
+              placeholder={units === 'metric' ? '77' : '170'}
+              keyboardType="decimal-pad"
+              value={weight}
+              onChangeText={setWeight}
+              {...numericInputProps}
             />
           </View>
         </View>
 
         <View style={styles.row}>
           <View style={styles.inputBlock}>
-            <Text style={styles.label}>Current Weight (lbs)</Text>
+            <Text style={styles.label}>Target Weight ({wUnit})</Text>
             <TextInput
               style={styles.input}
-              placeholder="170"
-              placeholderTextColor="#888"
-              keyboardType="number-pad"
-              value={weightLbs}
-              onChangeText={setWeightLbs}
-              autoComplete="off"
-              textContentType="oneTimeCode"
-              autoCorrect={false}
-              spellCheck={false}
-            />
-          </View>
-        </View>
-
-        <View style={styles.row}>
-          <View style={styles.inputBlock}>
-            <Text style={styles.label}>Target Weight (lbs)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="155"
-              placeholderTextColor="#888"
-              keyboardType="number-pad"
-              value={targetWeightLbs}
-              onChangeText={setTargetWeightLbs}
-              autoComplete="off"
-              textContentType="oneTimeCode"
-              autoCorrect={false}
-              spellCheck={false}
+              placeholder={units === 'metric' ? '70' : '155'}
+              keyboardType="decimal-pad"
+              value={targetWeight}
+              onChangeText={setTargetWeight}
+              {...numericInputProps}
             />
             {targetWeightError ? (
               <Text style={{ color: 'red', marginTop: 4, fontSize: 13 }}>{targetWeightError}</Text>
@@ -359,7 +298,12 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.selectorBlock}>
-          <Text style={styles.label}>Activity Level</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Activity Level</Text>
+            <TouchableOpacity onPress={() => setActivityGuideVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.helpLink}>Not sure? Find your level</Text>
+            </TouchableOpacity>
+          </View>
           <View style={styles.chipWrap}>
             {activities.map((act) => (
               <TouchableOpacity
@@ -376,18 +320,7 @@ export default function ProfileScreen() {
         <View style={styles.row}>
           <View style={styles.inputBlock}>
             <Text style={styles.label}>Target (days)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="90"
-              placeholderTextColor="#888"
-              keyboardType="number-pad"
-              value={targetDays}
-              onChangeText={setTargetDays}
-              autoComplete="off"
-              textContentType="oneTimeCode"
-              autoCorrect={false}
-              spellCheck={false}
-            />
+            <TextInput style={styles.input} placeholder="90" keyboardType="number-pad" value={targetDays} onChangeText={setTargetDays} {...numericInputProps} />
           </View>
         </View>
 
@@ -396,7 +329,7 @@ export default function ProfileScreen() {
             <Text style={styles.calorieLabel}>Your Personalized Calorie Target</Text>
             <Text style={styles.calorieValue}>{calculatedCalories} cal/day</Text>
             <Text style={styles.calorieContext}>
-              {getGoalLabel(goal)} • {getGoalContext(goal, calculatedCalories)}
+              {getGoalLabel(goal)} • {getGoalContext(calculatedCalories)}
             </Text>
           </View>
         )}
@@ -410,6 +343,11 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
+    <ActivityGuide
+      visible={activityGuideVisible}
+      onClose={() => setActivityGuideVisible(false)}
+      onSelect={setActivity}
+    />
     </SafeAreaView>
   );
 }
@@ -459,6 +397,16 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     flex: 1,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  helpLink: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#00B8A9',
   },
   label: {
     fontSize: 14,

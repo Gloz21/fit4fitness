@@ -177,16 +177,23 @@ export const authStore = {
         return { success: false, error: 'Not logged in.' };
       }
 
-      // Delete user data from all Supabase tables
-      const userId = username;
-      await Promise.allSettled([
-        supabase.from('user_profiles').delete().eq('user_id', userId),
-        supabase.from('nutrition').delete().eq('user_id', userId),
-        supabase.from('workouts').delete().eq('user_id', userId),
-        supabase.from('workout_sessions').delete().eq('user_id', userId),
-        supabase.from('exercises').delete().eq('user_id', userId),
-        supabase.from('saved_recipes').delete().eq('user_id', userId),
-      ]);
+      // Deletes the login itself; the database removes all of the user's rows with it
+      const { error: rpcError } = await supabase.rpc('delete_my_account');
+      if (rpcError) {
+        // PGRST202 = function not found (database script not run yet): delete the data only
+        if (rpcError.code !== 'PGRST202') {
+          return { success: false, error: 'Couldn’t delete your account. Check your connection and try again.' };
+        }
+        const userId = username;
+        await Promise.allSettled([
+          supabase.from('user_profiles').delete().eq('user_id', userId),
+          supabase.from('nutrition').delete().eq('user_id', userId),
+          supabase.from('workouts').delete().eq('user_id', userId),
+          supabase.from('workout_sessions').delete().eq('user_id', userId),
+          supabase.from('exercises').delete().eq('user_id', userId),
+          supabase.from('saved_recipes').delete().eq('user_id', userId),
+        ]);
+      }
 
       // Sign out the user
       await supabase.auth.signOut();

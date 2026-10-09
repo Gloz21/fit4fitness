@@ -1,18 +1,19 @@
 import React from 'react';
 import { StyleSheet, Switch, Text, View } from 'react-native';
-import { soundStore, useSoundStore } from '../lib/soundStore';
 
-export default function SoundSettings() {
-  const { musicEnabled, soundEffectsEnabled } = useSoundStore();
+interface SoundSettingsProps {
+  musicEnabled: boolean;
+  soundEffectsEnabled: boolean;
+  onMusicChange: (value: boolean) => void;
+  onSoundEffectsChange: (value: boolean) => void;
+}
 
-  const handleMusicToggle = async () => {
-    await soundStore.toggleMusic();
-  };
-
-  const handleSoundEffectsToggle = async () => {
-    await soundStore.toggleSoundEffects();
-  };
-
+export default function SoundSettings({
+  musicEnabled,
+  soundEffectsEnabled,
+  onMusicChange,
+  onSoundEffectsChange,
+}: SoundSettingsProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Audio Settings</Text>
@@ -24,7 +25,7 @@ export default function SoundSettings() {
         </View>
         <Switch
           value={musicEnabled}
-          onValueChange={handleMusicToggle}
+          onValueChange={onMusicChange}
           trackColor={{ false: '#D1D1D1', true: '#00B8A9' }}
           thumbColor={musicEnabled ? '#FFF' : '#F4F4F4'}
         />
@@ -37,7 +38,7 @@ export default function SoundSettings() {
         </View>
         <Switch
           value={soundEffectsEnabled}
-          onValueChange={handleSoundEffectsToggle}
+          onValueChange={onSoundEffectsChange}
           trackColor={{ false: '#D1D1D1', true: '#00B8A9' }}
           thumbColor={soundEffectsEnabled ? '#FFF' : '#F4F4F4'}
         />

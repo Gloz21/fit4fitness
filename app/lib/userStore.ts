@@ -60,6 +60,7 @@ export type UserProfile = {
   calorieTarget?: number;
   xp?: number;
   level?: number;
+  units?: 'imperial' | 'metric';
 };
 
 type State = {

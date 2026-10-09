@@ -8,9 +8,11 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ModalSafeArea } from '@/components/modal-safe-area';
 import { Exercise, exerciseCatalog } from '../lib/exercises';
 import { exerciseStore } from '../lib/exerciseStore';
+import { saveImportedExercises } from '../lib/importedExercises';
+import { useUnits, weightUnitFor } from '../lib/units';
 import { Workout, WorkoutCategory, WorkoutExercise } from '../lib/workouts';
 import { workoutStore } from '../lib/workoutStore';
 import CustomExerciseModal from './CustomExerciseModal';
@@ -19,6 +21,8 @@ import ExerciseInfoModal from './ExerciseInfoModal';
 type WorkoutBuilderProps = {
   visible: boolean;
   initialWorkout?: Workout;
+  heading?: string;
+  notice?: string;
   onSave: (workout: Workout) => void;
   onClose: () => void;
 };
@@ -26,9 +30,12 @@ type WorkoutBuilderProps = {
 export default function WorkoutBuilder({
   visible,
   initialWorkout,
+  heading,
+  notice,
   onSave,
   onClose,
 }: WorkoutBuilderProps) {
+  const wUnit = weightUnitFor(useUnits());
   const [workoutTitle, setWorkoutTitle] = useState(initialWorkout?.title || '');
   const [workoutDescription, setWorkoutDescription] = useState(initialWorkout?.description || '');
   const [workoutDifficulty, setWorkoutDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>(
@@ -50,6 +57,8 @@ export default function WorkoutBuilder({
   // Update form when initialWorkout changes (for editing)
   useEffect(() => {
     if (visible) {
+      // Custom exercises load after the app starts, so refresh the list each time the builder opens
+      setCustomExercises(exerciseStore.getCustomExercises());
       if (initialWorkout) {
         setWorkoutTitle(initialWorkout.title || '');
         setWorkoutDescription(initialWorkout.description || '');
@@ -106,6 +115,7 @@ export default function WorkoutBuilder({
       exerciseName: exercise.name,
       sets: 3,
       reps: 10,
+      unit: wUnit,
       restSeconds: 60,
     };
 
@@ -132,13 +142,13 @@ export default function WorkoutBuilder({
     setExercises(exercises.filter((_, i) => i !== index));
   };
 
-  const handleSaveWorkout = () => {
+  const handleSaveWorkout = async () => {
     if (!workoutTitle.trim() || exercises.length === 0) {
       alert('Please enter a title and add at least one exercise');
       return;
     }
 
-    const workout: Workout = {
+    const draft: Workout = {
       id: initialWorkout?.id || `custom-${Date.now()}`,
       title: workoutTitle,
       description: workoutDescription,
@@ -149,6 +159,8 @@ export default function WorkoutBuilder({
       createdAt: initialWorkout?.createdAt || Date.now(),
       isCustom: true,
     };
+    // Imported exercises that aren't in the catalog become the user's custom exercises
+    const workout = await saveImportedExercises(draft);
 
     // Save to My Workouts (customWorkouts) and also to the selected category
     onSave(workout);
@@ -174,15 +186,16 @@ export default function WorkoutBuilder({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+      <ModalSafeArea style={{ flex: 1, backgroundColor: '#FFF' }}>
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
             <Text style={styles.closeButton}>✕</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{initialWorkout ? 'Edit Workout' : 'Create Workout'}</Text>
+          <Text style={styles.headerTitle}>{heading ?? (initialWorkout ? 'Edit Workout' : 'Create Workout')}</Text>
           <View style={{ width: 30 }} />
         </View>
+        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
 
         {/* Workout Info */}
         <View style={styles.section}>
@@ -372,14 +385,14 @@ export default function WorkoutBuilder({
                         key={unit}
                         style={[
                           styles.unitButton,
-                          exercise.unit === unit && styles.unitButtonActive,
+                          (exercise.unit ?? wUnit) === unit && styles.unitButtonActive,
                         ]}
                         onPress={() => handleUpdateExercise(index, 'unit', unit as any)}
                       >
                         <Text
                           style={[
                             styles.unitButtonText,
-                            exercise.unit === unit && styles.unitButtonTextActive,
+                            (exercise.unit ?? wUnit) === unit && styles.unitButtonTextActive,
                           ]}
                         >
                           {unit}
@@ -495,7 +508,7 @@ export default function WorkoutBuilder({
                         keyboardType="number-pad"
                         placeholder="Reps"
                       />
-                      <Text style={styles.dropsetUnit}>{exercise.unit || 'lbs'}</Text>
+                      <Text style={styles.dropsetUnit}>{exercise.unit || wUnit}</Text>
                     </View>
                   ))}
                 </View>
@@ -540,7 +553,7 @@ export default function WorkoutBuilder({
               'flexibility',
             ];
             return (
-              <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+              <ModalSafeArea style={{ flex: 1, backgroundColor: '#FFF' }}>
                 <View style={styles.selectorHeader}>
                   <TouchableOpacity onPress={() => setShowExerciseSelector(false)} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
                     <Text style={styles.closeButton}>✕</Text>
@@ -625,7 +638,7 @@ export default function WorkoutBuilder({
                     setSelectedExerciseInfo(null);
                   }}
                 />
-              </SafeAreaView>
+              </ModalSafeArea>
             );
           })()}
         </Modal>
@@ -639,7 +652,7 @@ export default function WorkoutBuilder({
           onClose={() => setShowCustomExerciseModal(false)}
         />
 
-      </SafeAreaView>
+      </ModalSafeArea>
     </Modal>
   );
 }
@@ -655,6 +668,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     paddingTop: 10,
+  },
+  notice: {
+    backgroundColor: '#F0FBFA',
+    color: '#335F5A',
+    fontSize: 13,
+    lineHeight: 18,
+    borderRadius: 10,
+    padding: 12,
+    marginTop: -8,
+    marginBottom: 16,
   },
   closeButton: {
     fontSize: 28,

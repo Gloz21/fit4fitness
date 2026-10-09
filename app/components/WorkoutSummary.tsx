@@ -1,6 +1,7 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { convertLoad, loadIn, useUnits, weightUnitFor, type WeightUnit } from '../lib/units';
 import { Workout } from '../lib/workouts';
 
 type LoggedSet = {
@@ -32,20 +33,22 @@ export default function WorkoutSummary({
   workoutDate,
 }: WorkoutSummaryProps) {
   const displayTitle = workoutTitle || workout?.title || 'Workout';
-  const totalVolume = loggedSets.reduce((sum, set) => sum + set.reps * set.weight, 0);
+  const units = useUnits();
+  const weightUnit = weightUnitFor(units);
+  const setVolume = (set: LoggedSet) => set.reps * loadIn(set.weight, set.unit as WeightUnit, units);
+  const totalVolume = loggedSets.reduce((sum, set) => sum + setVolume(set), 0);
+  const totalVolumeLbs = loggedSets.reduce((sum, set) => sum + set.reps * loadIn(set.weight, set.unit as WeightUnit, 'imperial'), 0);
   const totalSetsLogged = loggedSets.length;
   const averageReps =
     totalSetsLogged > 0
       ? (loggedSets.reduce((sum, set) => sum + set.reps, 0) / totalSetsLogged).toFixed(1)
       : 0;
   
-  // Get weight unit from logged sets (use first set's unit or default to lbs)
-  const weightUnit = loggedSets[0]?.unit || 'lbs';
 
-  // Calculate XP earned: 1 per set + 1 per 100 volume + 1 per 2 min
+  // Calculate XP earned: 1 per set + 1 per 100 lbs volume + 1 per 2 min
   const totalTimeSeconds = Math.round(totalDuration / 1000);
   const xpFromSets = totalSetsLogged;
-  const xpFromVolume = Math.floor(totalVolume / 100);
+  const xpFromVolume = Math.floor(totalVolumeLbs / 100);
   const xpFromTime = Math.floor(totalTimeSeconds / 120);
   const totalXP = xpFromSets + xpFromVolume + xpFromTime;
 
@@ -55,7 +58,7 @@ export default function WorkoutSummary({
       // Original behavior when we have full workout object
       return workout.exercises.map((exercise, idx) => {
         const sets = loggedSets.filter((s) => s.exerciseIndex === idx);
-        const exerciseVolume = sets.reduce((sum, set) => sum + set.reps * set.weight, 0);
+        const exerciseVolume = sets.reduce((sum, set) => sum + setVolume(set), 0);
         return {
           exerciseName: exercise.exerciseName,
           sets,
@@ -77,7 +80,7 @@ export default function WorkoutSummary({
       return Array.from(exerciseMap.entries()).map(([name, sets]) => ({
         exerciseName: name,
         sets,
-        volume: sets.reduce((sum, set) => sum + set.reps * set.weight, 0),
+        volume: sets.reduce((sum, set) => sum + setVolume(set), 0),
         totalReps: sets.reduce((sum, set) => sum + set.reps, 0),
       }));
     }
@@ -166,10 +169,10 @@ export default function WorkoutSummary({
                   {summary.sets.map((set, setIdx) => (
                     <View key={setIdx} style={styles.setRow}>
                       <Text style={styles.setText}>
-                        Set {set.setNumber}: {set.reps} reps × {set.weight} {set.unit}
+                        Set {set.setNumber}: {set.reps} reps × {convertLoad(set.weight, set.unit as WeightUnit, weightUnit)} {weightUnit}
                       </Text>
                       <Text style={styles.setRowVolume}>
-                        {(set.reps * set.weight).toFixed(0)} {weightUnit}
+                        {setVolume(set).toFixed(0)} {weightUnit}
                       </Text>
                     </View>
                   ))}

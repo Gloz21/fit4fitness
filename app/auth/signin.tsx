@@ -198,12 +198,16 @@ export default function SignInScreen() {
       },
       eyeButton: {
         position: 'absolute',
-        right: 12,
-        top: 12,
-        padding: 4,
+        right: 8,
+        top: 0,
+        bottom: 0,
+        paddingHorizontal: 6,
+        justifyContent: 'center',
+        alignItems: 'center',
       },
       eyeIcon: {
         fontSize: 20,
+        lineHeight: 24,
       },
       input: {
         backgroundColor: '#FFF',
