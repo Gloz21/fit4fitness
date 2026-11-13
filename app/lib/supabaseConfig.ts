@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { processLock } from '@supabase/auth-js';
 import { createClient } from '@supabase/supabase-js';
 import { AppState, Platform } from 'react-native';
 
@@ -14,6 +15,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,
+    // In-app lock: on web the default browser lock times out with an uncaught
+    // "signal is aborted" error when several session checks start at once
+    lock: processLock,
   },
   global: {
     headers: {

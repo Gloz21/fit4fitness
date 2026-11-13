@@ -16,6 +16,7 @@ import { useUnits, weightUnitFor } from '../lib/units';
 import { Workout, WorkoutCategory, WorkoutExercise } from '../lib/workouts';
 import { workoutStore } from '../lib/workoutStore';
 import CustomExerciseModal from './CustomExerciseModal';
+import ExerciseBrowser from './ExerciseBrowser';
 import ExerciseInfoModal from './ExerciseInfoModal';
 
 type WorkoutBuilderProps = {
@@ -45,7 +46,6 @@ export default function WorkoutBuilder({
     initialWorkout?.category || 'strength'
   );
   const [exercises, setExercises] = useState<WorkoutExercise[]>(initialWorkout?.exercises || []);
-  const [selectedCategory, setSelectedCategory] = useState<string>('chest');
   const [showExerciseSelector, setShowExerciseSelector] = useState(false);
   const [editingExerciseIndex, setEditingExerciseIndex] = useState<number | null>(null);
   const [currentExerciseValues, setCurrentExerciseValues] = useState<Partial<WorkoutExercise>>({});
@@ -104,7 +104,6 @@ export default function WorkoutBuilder({
     'flexibility', // stretching/flexibility
   ];
   const allExercises = [...exerciseCatalog, ...customExercises];
-  const filteredExercises = allExercises.filter((ex) => ex.category === selectedCategory);
 
   const handleAddExercise = (exerciseId: string) => {
     const exercise = allExercises.find((ex) => ex.id === exerciseId);
@@ -537,21 +536,7 @@ export default function WorkoutBuilder({
           animationType="slide"
           onRequestClose={() => setShowExerciseSelector(false)}
         >
-          {/* Define exerciseCategories here so it's always in scope for the selector UI */}
           {(() => {
-            // Only show actual exercise categories for selection
-            const exerciseCategories = [
-              'chest',
-              'back',
-              'legs',
-              'shoulders',
-              'arms',
-              'core',
-              'cardio',
-              'athletic',
-              'agility',
-              'flexibility',
-            ];
             return (
               <ModalSafeArea style={{ flex: 1, backgroundColor: '#FFF' }}>
                 <View style={styles.selectorHeader}>
@@ -569,66 +554,26 @@ export default function WorkoutBuilder({
                     <Text style={styles.createExerciseButtonText}>+ Create</Text>
                   </TouchableOpacity>
                 </View>
-                <ScrollView contentContainerStyle={styles.categoriesContainer}>
-                  <View style={styles.categoryTabs}>
-                    {exerciseCategories.map((cat) => (
+                <ExerciseBrowser
+                  customExercises={customExercises}
+                  onPress={(exercise) => handleAddExercise(exercise.id)}
+                  renderActions={(exercise) => (
+                    <>
                       <TouchableOpacity
-                        key={cat}
-                        style={[
-                          styles.categoryTab,
-                          selectedCategory === cat && styles.categoryTabActive,
-                        ]}
-                        onPress={() => setSelectedCategory(cat)}
+                        style={styles.infoButton}
+                        onPress={() => {
+                          setSelectedExerciseInfo(exercise);
+                          setShowExerciseInfo(true);
+                        }}
                       >
-                        <Text
-                          style={[
-                            styles.categoryTabText,
-                            selectedCategory === cat && styles.categoryTabTextActive,
-                          ]}
-                        >
-                          {cat.charAt(0).toUpperCase() + cat.slice(1)}
-                        </Text>
+                        <Text style={styles.infoButtonText}>ℹ️</Text>
                       </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  <View style={styles.exerciseList}>
-                    {filteredExercises.map((exercise) => (
-                      <View key={exercise.id} style={styles.exerciseOption}>
-                        <TouchableOpacity
-                          style={styles.exerciseOptionContent}
-                          onPress={() => handleAddExercise(exercise.id)}
-                        >
-                          <Text style={styles.exerciseOptionName}>{exercise.name}</Text>
-                          <Text style={styles.exerciseOptionDesc}>{exercise.description}</Text>
-                          {Array.isArray(exercise.muscleGroups) && exercise.muscleGroups.length > 0 && (
-                            <View style={styles.muscleGroupsTags}>
-                              {exercise.muscleGroups.map((muscle, idx) => (
-                                <Text key={idx} style={styles.muscleTag}>
-                                  {muscle}
-                                </Text>
-                              ))}
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                        <View style={styles.exerciseActions}>
-                          <TouchableOpacity
-                            style={styles.infoButton}
-                            onPress={() => {
-                              setSelectedExerciseInfo(exercise);
-                              setShowExerciseInfo(true);
-                            }}
-                          >
-                            <Text style={styles.infoButtonText}>ℹ️</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity onPress={() => handleAddExercise(exercise.id)}>
-                            <Text style={styles.addIcon}>+</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                </ScrollView>
+                      <TouchableOpacity onPress={() => handleAddExercise(exercise.id)}>
+                        <Text style={styles.addIcon}>+</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                />
                 {/* Exercise Info Modal - rendered INSIDE exercise selector so it stacks on iOS */}
                 <ExerciseInfoModal
                   visible={showExerciseInfo}

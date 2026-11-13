@@ -79,6 +79,9 @@ const ALIASES: Record<string, string> = {
   'bicep curl': 'db-curls',
   'dip': 'chest-dips',
   'plank': 'planks',
+  'nordic': 'lib-nordic-hamstring-curl',
+  'nordic curl': 'lib-nordic-hamstring-curl',
+  'nordic hamstring curl': 'lib-nordic-hamstring-curl',
   'lat pulldown': 'lat-pulldowns',
   'pulldown': 'lat-pulldowns',
   'lateral raise': 'db-lateral-raises',
@@ -159,6 +162,12 @@ export function buildMatcher(catalog: Exercise[]) {
         if (!input.has(t) && !GENERIC_WORDS.has(t)) extrasOk = false;
       });
       if (!extrasOk) continue;
+      // ...and every specific word the user typed must be in it ("Nordic curls" is not "Barbell Curls")
+      let inputOk = true;
+      input.forEach((t) => {
+        if (!entry.toks.has(t) && !GENERIC_WORDS.has(t)) inputOk = false;
+      });
+      if (!inputOk) continue;
       // Equipment the user named must match ("Barbell row" is not a cable row)
       let equipmentOk = true;
       input.forEach((t) => {

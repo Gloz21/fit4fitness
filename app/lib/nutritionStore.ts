@@ -31,11 +31,33 @@ let hydrated = false;
 const listeners = new Set<() => void>();
 let persistTimeout: NodeJS.Timeout | null = null;
 
+// Decimal math adds tiny errors (1.6 + 1.6 + 1.6 = 4.800000000000001), so every
+// total is rounded: calories to whole numbers, macros to one decimal place.
+export const roundCalories = (n: number) => Math.round(Number(n) || 0);
+export const roundMacro = (n: number) => Math.round((Number(n) || 0) * 10) / 10;
+
+const cleanTotals = (day: NutritionDay) => {
+  day.totalCalories = Math.max(0, roundCalories(day.totalCalories));
+  day.totalProtein = Math.max(0, roundMacro(day.totalProtein));
+  day.totalCarbs = Math.max(0, roundMacro(day.totalCarbs));
+  day.totalFat = Math.max(0, roundMacro(day.totalFat));
+};
+
+const cleanMeal = (meal: Meal): Meal => ({
+  ...meal,
+  calories: roundCalories(meal.calories),
+  protein: roundMacro(meal.protein || 0),
+  carbs: roundMacro(meal.carbs || 0),
+  fat: roundMacro(meal.fat || 0),
+});
+
 const notify = () => {
   listeners.forEach((fn) => fn());
 };
 
 const persist = async () => {
+  // Runs before notify() in every update, so the screen only ever sees rounded totals
+  Object.values(state).forEach(cleanTotals);
   const userId = authStore.getCurrentUserId();
   if (!userId) {
     console.log('⚠️ persist: no userId, skipping');
@@ -132,6 +154,9 @@ export const nutritionStore = {
             state[date].totalCalories = caloriesFromMeals;
             console.log(`📦 Migrated ${date}: totalCalories = ${caloriesFromMeals}`);
           }
+          // Fix totals saved before rounding was added (e.g. 4.800000000000001)
+          state[date].meals = (state[date].meals || []).map(cleanMeal);
+          cleanTotals(state[date]);
         });
       } else {
         // Reset state for new user
@@ -224,6 +249,7 @@ export const nutritionStore = {
         totalFat: 0,
       };
     }
+    meal = cleanMeal(meal);
     const mealWithTimestamp = {
       ...meal,
       timestamp: meal.timestamp || Date.now(),
@@ -258,6 +284,7 @@ export const nutritionStore = {
     if (!state[targetDate]) return;
 
     const oldMeal = state[targetDate].meals[mealIndex];
+    meal = cleanMeal(meal);
     if (oldMeal) {
       state[targetDate].totalProtein -= oldMeal.protein || 0;
       state[targetDate].totalCarbs -= oldMeal.carbs || 0;

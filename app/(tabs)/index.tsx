@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AccountModal from '../components/AccountModal';
+import ExerciseLibraryModal from '../components/ExerciseLibraryModal';
 import ImportWorkoutModal from '../components/ImportWorkoutModal';
 import MacroBreakdown from '../components/MacroBreakdown';
 import MacroWheel from '../components/MacroWheel';
@@ -19,7 +20,7 @@ import WorkoutSummary from '../components/WorkoutSummary';
 import { authStore } from '../lib/authStore';
 import { getTodaysFact } from '../lib/facts';
 import { FoodItem, searchFoodDatabase } from '../lib/foodDatabase';
-import { nutritionStore, useNutritionStore } from '../lib/nutritionStore';
+import { nutritionStore, roundCalories, roundMacro, useNutritionStore } from '../lib/nutritionStore';
 import { getRecipesForGoal, Recipe } from '../lib/recipes';
 import { recipeStore, useRecipeStore } from '../lib/recipeStore';
 import SettingsModal from '../lib/SettingsModal';
@@ -64,6 +65,7 @@ export default function HomeScreen() {
   const [newRecipeFat, setNewRecipeFat] = useState('');
   const [workoutBuilderVisible, setWorkoutBuilderVisible] = useState(false);
   const [importVisible, setImportVisible] = useState(false);
+  const [libraryVisible, setLibraryVisible] = useState(false);
   const [builderHeading, setBuilderHeading] = useState<string | undefined>(undefined);
   const [builderNotice, setBuilderNotice] = useState<string | undefined>(undefined);
 
@@ -361,6 +363,13 @@ export default function HomeScreen() {
                 <View style={styles.workoutInfo}>
                   <Text style={styles.workoutTitle}>Import a Workout</Text>
                   <Text style={styles.workoutDesc}>Paste text, use a Google Doc or Sheet link, or upload a .txt or .csv file</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.workoutOption} onPress={() => setLibraryVisible(true)}>
+                <Text style={styles.workoutEmoji}>📚</Text>
+                <View style={styles.workoutInfo}>
+                  <Text style={styles.workoutTitle}>Exercise Library</Text>
+                  <Text style={styles.workoutDesc}>Browse every exercise by category, see how to do it, and add your own</Text>
                 </View>
               </TouchableOpacity>
             </View>
@@ -1693,6 +1702,8 @@ export default function HomeScreen() {
         }}
       />
 
+      <ExerciseLibraryModal visible={libraryVisible} onClose={() => setLibraryVisible(false)} />
+
       <ImportWorkoutModal
         visible={importVisible}
         onClose={() => setImportVisible(false)}
@@ -1972,7 +1983,7 @@ function NutritionTab({ nutrition, profile, goal }: NutritionTabProps) {
     if (mealName.trim() && mealCalories.trim()) {
       nutritionStore.addMeal({
         name: mealName.trim(),
-        calories: parseInt(mealCalories, 10) || 0,
+        calories: Math.round(parseFloat(mealCalories)) || 0,
         protein: parseFloat(mealProtein) || 0,
         carbs: parseFloat(mealCarbs) || 0,
         fat: parseFloat(mealFat) || 0,
@@ -2263,7 +2274,7 @@ function NutritionTab({ nutrition, profile, goal }: NutritionTabProps) {
                 <View style={styles.mealInfo}>
                   <Text style={styles.mealItem}>{meal.name}</Text>
                   <Text style={styles.mealCal}>
-                    {meal.calories} cal • P: {meal.protein || 0}g • C: {meal.carbs || 0}g • F: {meal.fat || 0}g
+                    {roundCalories(meal.calories)} cal • P: {roundMacro(meal.protein || 0)}g • C: {roundMacro(meal.carbs || 0)}g • F: {roundMacro(meal.fat || 0)}g
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => handleRemoveMeal(index)} style={styles.deleteButton}>

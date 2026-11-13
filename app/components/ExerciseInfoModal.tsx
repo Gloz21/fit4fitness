@@ -424,7 +424,8 @@ export default function ExerciseInfoModal({
               </View>
             )}
 
-            {/* Instructions */}
+            {/* Instructions (exercises added from the library list don't have any yet) */}
+            {exercise.instructions.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>📝 How to Perform</Text>
               {exercise.instructions.map((instruction, index) => (
@@ -436,6 +437,7 @@ export default function ExerciseInfoModal({
                 </View>
               ))}
             </View>
+            )}
 
             {/* Tips */}
             <View style={styles.tipsBox}>
