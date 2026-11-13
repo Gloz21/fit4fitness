@@ -12,7 +12,9 @@ type MacroWheelProps = {
   onReset: () => void;
 };
 
-export default function MacroWheel({ label, value, target, unit, color, onUpdate, onReset }: MacroWheelProps) {
+export default function MacroWheel({ label, value: rawValue, target, unit, color, onUpdate, onReset }: MacroWheelProps) {
+  // Calories show as whole numbers, grams to at most one decimal place (never 4.800000001)
+  const value = unit === 'cal' ? Math.round(rawValue || 0) : Math.round((rawValue || 0) * 10) / 10;
   const [modalVisible, setModalVisible] = useState(false);
   const [inputValue, setInputValue] = useState(value.toString());
 
@@ -66,7 +68,7 @@ export default function MacroWheel({ label, value, target, unit, color, onUpdate
             />
           </Svg>
           <View style={styles.valueContainer}>
-            <Text style={styles.valueText}>{value}</Text>
+            <Text style={styles.valueText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{value}</Text>
             <Text style={styles.unitText}>{unit}</Text>
           </View>
         </View>

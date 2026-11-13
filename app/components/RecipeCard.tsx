@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ModalSafeArea } from '@/components/modal-safe-area';
 import { Recipe } from '../lib/recipes';
 
 type RecipeCardProps = {
@@ -66,7 +66,7 @@ export default function RecipeCard({ recipe, isSaved, onSave, onUnsave, onLogMea
         animationType="slide"
         onRequestClose={() => setDetailsVisible(false)}
       >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+        <ModalSafeArea style={{ flex: 1, backgroundColor: '#FFF' }}>
         <ScrollView style={styles.detailsModal} contentContainerStyle={styles.detailsContent}>
           <TouchableOpacity
             style={styles.closeButton}
@@ -143,7 +143,7 @@ export default function RecipeCard({ recipe, isSaved, onSave, onUnsave, onLogMea
             )}
           </View>
         </ScrollView>
-        </SafeAreaView>
+        </ModalSafeArea>
       </Modal>
     </>
   );

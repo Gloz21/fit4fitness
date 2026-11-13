@@ -1,9 +1,43 @@
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Link, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { authStore } from './lib/authStore';
+import { userStore } from './lib/userStore';
 
 export default function StarterScreen() {
+  const router = useRouter();
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  // Still signed in from last time? Skip the welcome screen.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      await authStore.hydrate();
+      if (!active) return;
+      if (authStore.isLoggedIn()) {
+        await userStore.hydrate(true);
+        if (!active) return;
+        const { onboardingComplete, goal, profile } = userStore.getState();
+        router.replace(onboardingComplete || (goal && profile?.weightKg) ? '/(tabs)' : '/onboarding/goal');
+        return;
+      }
+      setCheckingSession(false);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (checkingSession) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator color="#00B8A9" />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#E8E8E8' }} edges={['top', 'bottom']}>
     <ThemedView style={styles.screen}>
@@ -37,6 +71,12 @@ export default function StarterScreen() {
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    backgroundColor: '#E8E8E8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   screen: {
     flex: 1,
     backgroundColor: '#E8E8E8',

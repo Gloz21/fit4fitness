@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { loadIn, useUnits, weightUnitFor } from '../lib/units';
 
 // Custom Slider component that works on both web and native
 function CustomSlider({
@@ -240,6 +242,8 @@ export default function SorenessTracker({
   workoutVolumeToday,
 }: SorenessTrackerProps) {
   const [simulatorVisible, setSimulatorVisible] = useState(false);
+  const units = useUnits();
+  const insets = useSafeAreaInsets();
   
   // Simulator values (what-if)
   const [simWater, setSimWater] = useState(waterGlasses);
@@ -337,7 +341,7 @@ export default function SorenessTracker({
         onRequestClose={() => setSimulatorVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>🔮 What If Simulator</Text>
               <TouchableOpacity onPress={() => setSimulatorVisible(false)}>
@@ -373,6 +377,11 @@ export default function SorenessTracker({
             </View>
             
             {/* Sliders */}
+            <ScrollView
+              style={styles.sliderScroll}
+              contentContainerStyle={styles.sliderScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
             <View style={styles.sliderSection}>
               <View style={styles.sliderHeader}>
                 <Text style={styles.sliderLabel}>💧 Water Glasses</Text>
@@ -436,7 +445,7 @@ export default function SorenessTracker({
             <View style={styles.sliderSection}>
               <View style={styles.sliderHeader}>
                 <Text style={styles.sliderLabel}>💪 Workout Volume</Text>
-                <Text style={styles.sliderValue}>{simVolume.toLocaleString()} lbs</Text>
+                <Text style={styles.sliderValue}>{Math.round(loadIn(simVolume, 'lbs', units)).toLocaleString()} {weightUnitFor(units)}</Text>
               </View>
               <CustomSlider
                 minimumValue={0}
@@ -463,6 +472,7 @@ export default function SorenessTracker({
                 </Text>
               </View>
             )}
+            </ScrollView>
             
             <TouchableOpacity 
               style={styles.closeModalButton}
@@ -490,8 +500,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 8,
   },
   title: {
+    flexShrink: 1,
     fontSize: 18,
     fontWeight: '800',
     color: '#1A1A1A',
@@ -583,8 +595,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 24,
-    maxHeight: '85%',
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    maxHeight: '90%',
+  },
+  sliderScroll: {
+    flexShrink: 1,
+  },
+  sliderScrollContent: {
+    paddingBottom: 4,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -593,6 +612,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   modalTitle: {
+    flexShrink: 1,
     fontSize: 22,
     fontWeight: '800',
     color: '#1A1A1A',
@@ -605,7 +625,7 @@ const styles = StyleSheet.create({
   modalSubtitle: {
     fontSize: 14,
     color: '#666',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   comparisonContainer: {
     flexDirection: 'row',
@@ -613,8 +633,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#F5F5F5',
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
   },
   comparisonItem: {
     alignItems: 'center',
@@ -645,6 +666,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sliderLabel: {
+    flexShrink: 1,
     fontSize: 14,
     fontWeight: '600',
     color: '#333',
@@ -676,7 +698,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 16,
+    marginTop: 12,
   },
   closeModalButtonText: {
     color: '#FFF',

@@ -1,14 +1,18 @@
 import SoundSettings from '@/app/components/SoundSettings';
 import { authStore } from '@/app/lib/authStore';
+import { exerciseStore } from '@/app/lib/exerciseStore';
 import { nutritionStore } from '@/app/lib/nutritionStore';
 import { recipeStore } from '@/app/lib/recipeStore';
+import { soundStore, useSoundStore } from '@/app/lib/soundStore';
+import { getUnits, setUnits, UnitSystem, useUnits } from '@/app/lib/units';
 import { userStore } from '@/app/lib/userStore';
+import { UnitToggle } from '@/components/unit-toggle';
 import { workoutSessionStore } from '@/app/lib/workoutSessionStore';
 import { workoutStore } from '@/app/lib/workoutStore';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useEffect, useState } from 'react';
+import { Alert, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -16,7 +20,10 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ visible, onClose }: SettingsModalProps) {
+  const savedUnits = useUnits();
+  const { musicEnabled: savedMusic, soundEffectsEnabled: savedSoundEffects } = useSoundStore();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<'account' | 'preferences'>('account');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -25,41 +32,106 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const username = authStore.getCurrentUserEmail()?.split("@")[0] || 'User';
 
-  const handleChangePassword = async () => {
+  // Edits stay as drafts until "Save Changes" is pressed
+  const [draftUnits, setDraftUnits] = useState<UnitSystem>(savedUnits);
+  const [draftMusic, setDraftMusic] = useState(savedMusic);
+  const [draftSoundEffects, setDraftSoundEffects] = useState(savedSoundEffects);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+
+  // Start from the saved values every time the screen opens
+  useEffect(() => {
+    if (!visible) return;
+    const sound = soundStore.getState();
+    setDraftUnits(getUnits());
+    setDraftMusic(sound.musicEnabled);
+    setDraftSoundEffects(sound.soundEffectsEnabled);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError('');
+    setPasswordSuccess('');
+    setSaveMessage('');
+  }, [visible]);
+
+  const passwordDirty = !!(currentPassword || newPassword || confirmPassword);
+  const preferencesDirty =
+    draftUnits !== savedUnits || draftMusic !== savedMusic || draftSoundEffects !== savedSoundEffects;
+  const hasChanges = passwordDirty || preferencesDirty;
+
+  const changePassword = async (): Promise<boolean> => {
     setPasswordError('');
     setPasswordSuccess('');
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setPasswordError('All fields required.');
-      return;
+      setPasswordError('Fill in all three password fields, or clear them to keep your current password.');
+      return false;
     }
 
     if (newPassword.length < 3 || newPassword.length > 20) {
       setPasswordError('Password must be 3–20 characters.');
-      return;
+      return false;
     }
 
     if (newPassword !== confirmPassword) {
       setPasswordError('Passwords do not match.');
-      return;
+      return false;
     }
 
-    // Actually change the password via authStore
     const result = await authStore.changePassword(currentPassword, newPassword);
-    if (result.success) {
-      setPasswordSuccess('Password changed successfully!');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } else {
+    if (!result.success) {
       setPasswordError(result.error || 'Password change failed.');
+      return false;
     }
+    setPasswordSuccess('Password changed.');
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    return true;
+  };
+
+  const handleSave = async () => {
+    if (!hasChanges || saving) return;
+    setSaving(true);
+    setSaveMessage('');
+    try {
+      if (passwordDirty) {
+        const ok = await changePassword();
+        if (!ok) {
+          setActiveTab('account');
+          return;
+        }
+      }
+      if (draftUnits !== savedUnits) setUnits(draftUnits);
+      if (draftMusic !== soundStore.isMusicEnabled()) await soundStore.toggleMusic();
+      if (draftSoundEffects !== soundStore.areSoundEffectsEnabled()) await soundStore.toggleSoundEffects();
+      setSaveMessage('Changes saved');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const requestClose = () => {
+    if (!hasChanges) {
+      onClose();
+      return;
+    }
+    const message = 'You have changes that haven’t been saved. Close without saving?';
+    if (Platform.OS === 'web') {
+      if (window.confirm(message)) onClose();
+      return;
+    }
+    Alert.alert('Unsaved Changes', message, [
+      { text: 'Keep Editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onClose },
+    ]);
   };
 
   const handleLogout = async () => {
     console.log('🔴 Logging out...');
     // Clear ALL auth and data stores
     await authStore.logout();
+    exerciseStore.clear();
     await userStore.reset();
     await nutritionStore.reset();
     await workoutStore.reset();
@@ -69,18 +141,61 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
     // Close modal and navigate
     onClose();
     setTimeout(() => {
-      router.dismissAll();
-      router.replace('/');
+      if (router.canDismiss()) router.dismissAll();
+      router.replace('/welcome');
     }, 300);
   };
 
+  const doDeleteAccount = async () => {
+    const result = await authStore.deleteAccount();
+    if (result.success) {
+      await userStore.reset();
+      await nutritionStore.reset();
+      await workoutStore.reset();
+      await workoutSessionStore.reset();
+      await recipeStore.reset();
+      onClose();
+      setTimeout(() => {
+        if (router.canDismiss()) router.dismissAll();
+        router.replace('/welcome');
+      }, 300);
+    } else {
+      if (Platform.OS === 'web') {
+        window.alert(result.error || 'Failed to delete account.');
+      } else {
+        Alert.alert('Error', result.error || 'Failed to delete account.');
+      }
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to permanently delete your account and all your data? This cannot be undone.');
+      if (confirmed) {
+        doDeleteAccount();
+      }
+    } else {
+      Alert.alert(
+        'Delete Account',
+        'Are you sure you want to permanently delete your account and all your data? This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: doDeleteAccount,
+          },
+        ]
+      );
+    }
+  };
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#E8E8E8' }}>
-      <View style={styles.container}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={requestClose}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 50) }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} style={{ padding: 8 }}>
+          <TouchableOpacity onPress={requestClose} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }} style={{ padding: 8 }}>
             <Text style={styles.closeButton}>✕</Text>
           </TouchableOpacity>
         </View>
@@ -160,23 +275,34 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
                   />
                 </View>
 
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={handleChangePassword}
-                >
-                  <Text style={styles.primaryButtonText}>Update Password</Text>
-                </TouchableOpacity>
+                <Text style={styles.hintText}>Leave these blank to keep your current password.</Text>
               </View>
 
               {/* Logout */}
               <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
                 <Text style={styles.logoutButtonText}>Logout</Text>
               </TouchableOpacity>
+
+              {/* Delete Account */}
+              <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount}>
+                <Text style={styles.deleteButtonText}>Delete Account</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.section}>
+              {/* Units */}
+              <View style={styles.settingGroup}>
+                <Text style={styles.sectionTitle}>Units</Text>
+                <UnitToggle value={draftUnits} onChange={setDraftUnits} />
+              </View>
+
               {/* Audio Settings */}
-              <SoundSettings />
+              <SoundSettings
+                musicEnabled={draftMusic}
+                soundEffectsEnabled={draftSoundEffects}
+                onMusicChange={setDraftMusic}
+                onSoundEffectsChange={setDraftSoundEffects}
+              />
 
               {/* About */}
               <View style={styles.aboutSection}>
@@ -193,8 +319,22 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
             </View>
           )}
         </ScrollView>
+
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <Text style={[styles.footerStatus, !hasChanges && saveMessage ? styles.footerStatusSaved : null]}>
+            {hasChanges ? 'You have unsaved changes' : saveMessage}
+          </Text>
+          <TouchableOpacity
+            style={[styles.primaryButton, styles.saveButton, (!hasChanges || saving) && styles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={!hasChanges || saving}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !hasChanges || saving }}
+          >
+            <Text style={styles.primaryButtonText}>{saving ? 'Saving…' : 'Save Changes'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-      </SafeAreaView>
     </Modal>
   );
 }
@@ -202,7 +342,7 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#E8E8E8',
+    backgroundColor: '#FFF',
   },
   header: {
     flexDirection: 'row',
@@ -307,6 +447,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  saveButton: {
+    marginTop: 0,
+  },
+  saveButtonDisabled: {
+    opacity: 0.4,
+  },
+  footer: {
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    gap: 8,
+  },
+  footerStatus: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#B07500',
+    textAlign: 'center',
+    minHeight: 18,
+  },
+  footerStatusSaved: {
+    color: '#00B8A9',
+  },
+  hintText: {
+    fontSize: 12,
+    color: '#888',
+  },
   primaryButtonText: {
     color: '#FFF',
     fontWeight: '800',
@@ -333,6 +500,20 @@ const styles = StyleSheet.create({
   },
   logoutButtonText: {
     color: '#FFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  deleteButton: {
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+    borderWidth: 2,
+    borderColor: '#FF3B30',
+  },
+  deleteButtonText: {
+    color: '#FF3B30',
     fontWeight: '800',
     fontSize: 14,
   },

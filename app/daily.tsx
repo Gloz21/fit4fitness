@@ -2,6 +2,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { formatBodyWeight, formatHeight, useUnits } from './lib/units';
 import { useUserStore } from './lib/userStore';
 
 const mockFact = {
@@ -17,11 +18,7 @@ const mockChallenge = {
 
 export default function DailyScreen() {
   const { goal, profile, hydrated } = useUserStore();
-  
-  // Convert weight for display (always lbs)
-  const displayWeight = profile.weightKg 
-    ? (profile.weightKg * 2.20462).toFixed(1)
-    : null;
+  const units = useUnits();
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0F172A' }} edges={['top', 'bottom']}>
@@ -45,10 +42,10 @@ export default function DailyScreen() {
         <View style={styles.metaRow}>
           <Text style={styles.metaChip}>Age: {!hydrated ? '…' : profile.age ?? '—'}</Text>
           <Text style={styles.metaChip}>
-            Height: {!hydrated ? '…' : profile.heightCm ? `${profile.heightCm} cm` : '—'}
+            Height: {!hydrated ? '…' : formatHeight(profile.heightCm, units)}
           </Text>
           <Text style={styles.metaChip}>
-            Weight: {!hydrated ? '…' : displayWeight ? `${displayWeight} lbs` : '—'}
+            Weight: {!hydrated ? '…' : formatBodyWeight(profile.weightKg, units)}
           </Text>
         </View>
         <View style={styles.metaRow}>

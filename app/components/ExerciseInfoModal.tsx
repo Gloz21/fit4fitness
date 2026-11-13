@@ -7,7 +7,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ModalSafeArea } from '@/components/modal-safe-area';
 import { Exercise } from '../lib/exercises';
 import RealisticMuscleDiagram from './RealisticMuscleDiagram';
 
@@ -339,7 +339,7 @@ export default function ExerciseInfoModal({
       transparent
     >
       <View style={styles.overlay}>
-        <SafeAreaView style={{ flex: 0 }} edges={['bottom']}>
+        <ModalSafeArea style={{ flex: 0 }} edges={['bottom']}>
         <View style={styles.modalContainer}>
           <ScrollView contentContainerStyle={styles.content}>
             {/* Header */}
@@ -424,7 +424,8 @@ export default function ExerciseInfoModal({
               </View>
             )}
 
-            {/* Instructions */}
+            {/* Instructions (exercises added from the library list don't have any yet) */}
+            {exercise.instructions.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>📝 How to Perform</Text>
               {exercise.instructions.map((instruction, index) => (
@@ -436,6 +437,7 @@ export default function ExerciseInfoModal({
                 </View>
               ))}
             </View>
+            )}
 
             {/* Tips */}
             <View style={styles.tipsBox}>
@@ -449,7 +451,7 @@ export default function ExerciseInfoModal({
             </View>
           </ScrollView>
         </View>
-        </SafeAreaView>
+        </ModalSafeArea>
       </View>
     </Modal>
   );

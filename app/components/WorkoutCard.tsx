@@ -1,5 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { loadIn, useUnits, weightUnitFor, type WeightUnit } from '../lib/units';
 import { Workout } from '../lib/workouts';
 
 type WorkoutCardProps = {
@@ -13,6 +14,7 @@ type WorkoutCardProps = {
 };
 
 export default function WorkoutCard({ workout, onStart, onEdit, onDelete, isSaved = false, onSave, onUnsave }: WorkoutCardProps) {
+  const units = useUnits();
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
       case 'beginner':
@@ -27,11 +29,13 @@ export default function WorkoutCard({ workout, onStart, onEdit, onDelete, isSave
   };
 
   const calculateTotalVolume = () => {
-    return workout.exercises.reduce((total, ex) => {
-      const weight = ex.weight || 0;
-      return total + weight * ex.sets * ex.reps;
+    const total = workout.exercises.reduce((sum, ex) => {
+      const weight = loadIn(ex.weight || 0, (ex.unit as WeightUnit) || 'lbs', units);
+      return sum + weight * ex.sets * ex.reps;
     }, 0);
+    return Math.round(total);
   };
+  const totalVolume = calculateTotalVolume();
 
   const totalExercises = workout.exercises.length;
   const totalSets = workout.exercises.reduce((sum, ex) => sum + ex.sets, 0);
@@ -74,10 +78,10 @@ export default function WorkoutCard({ workout, onStart, onEdit, onDelete, isSave
             <Text style={styles.statLabel}>Minutes</Text>
           </View>
         )}
-        {calculateTotalVolume() > 0 && (
+        {totalVolume > 0 && (
           <View style={styles.stat}>
-            <Text style={styles.statValue}>{calculateTotalVolume()}</Text>
-            <Text style={styles.statLabel}>Volume</Text>
+            <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{totalVolume.toLocaleString()}</Text>
+            <Text style={styles.statLabel}>Volume ({weightUnitFor(units)})</Text>
           </View>
         )}
       </View>
@@ -163,15 +167,17 @@ const styles = StyleSheet.create({
   titleSection: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    alignItems: 'flex-start',
+    gap: 10,
   },
   title: {
+    flexShrink: 1,
     fontSize: 18,
     fontWeight: '700',
     color: '#1A1A1A',
   },
   difficultyBadge: {
+    marginTop: 2,
     backgroundColor: '#F5F5F5',
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -184,6 +190,8 @@ const styles = StyleSheet.create({
   customBadge: {
     fontSize: 12,
     color: '#666',
+    marginLeft: 8,
+    marginTop: 4,
   },
   description: {
     fontSize: 13,

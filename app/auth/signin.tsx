@@ -7,13 +7,14 @@ import { ThemedView } from '@/components/themed-view';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function SignInScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
 
   const onSignIn = async () => {
@@ -73,10 +74,19 @@ export default function SignInScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#E8E8E8' }} edges={['top', 'bottom']}>
     <ThemedView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Back</Text>
-        </TouchableOpacity>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={0}
+      >
+          <ScrollView 
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <TouchableOpacity onPress={() => router.back()}>
+              <Text style={styles.backButton}>← Back</Text>
+            </TouchableOpacity>
         <Text style={styles.title}>Welcome Back</Text>
         <Text style={styles.subtitle}>Sign in to your Fit4Fitness account.</Text>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -90,23 +100,31 @@ export default function SignInScreen() {
                 onChangeText={setUsername}
                 autoCapitalize="none"
                 autoComplete="off"
-                textContentType="oneTimeCode"
                 autoCorrect={false}
               />
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your password"
-                placeholderTextColor="#888"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoComplete="off"
-                textContentType="oneTimeCode"
-                autoCorrect={false}
-              />
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  style={[styles.input, styles.passwordInput]}
+                  placeholder="Enter your password"
+                  placeholderTextColor="#888"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  autoComplete="off"
+                  autoCorrect={false}
+                  textContentType="none"
+                  clearTextOnFocus={false}
+                />
+                <TouchableOpacity 
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.eyeButton}
+                >
+                  <Text style={styles.eyeIcon}>{showPassword ? '👁️' : '👁️‍🗨️'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <TouchableOpacity
               style={[styles.primaryCta, !isValid && styles.primaryCtaDisabled]}
@@ -122,9 +140,10 @@ export default function SignInScreen() {
               </TouchableOpacity>
             </View>
           </ScrollView>
-        </ThemedView>
-        </SafeAreaView>
-      );
+      </KeyboardAvoidingView>
+    </ThemedView>
+    </SafeAreaView>
+  );
     }
 
     const styles = StyleSheet.create({
@@ -134,8 +153,8 @@ export default function SignInScreen() {
       },
       scroll: {
         flexGrow: 1,
-        justifyContent: 'center',
         padding: 24,
+        paddingBottom: 40,
       },
       backButton: {
         fontSize: 18,
@@ -170,6 +189,25 @@ export default function SignInScreen() {
         fontSize: 14,
         fontWeight: '700',
         color: '#1A1A1A',
+      },
+      passwordContainer: {
+        position: 'relative',
+      },
+      passwordInput: {
+        paddingRight: 48,
+      },
+      eyeButton: {
+        position: 'absolute',
+        right: 8,
+        top: 0,
+        bottom: 0,
+        paddingHorizontal: 6,
+        justifyContent: 'center',
+        alignItems: 'center',
+      },
+      eyeIcon: {
+        fontSize: 20,
+        lineHeight: 24,
       },
       input: {
         backgroundColor: '#FFF',

@@ -10,10 +10,12 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ModalSafeArea } from '@/components/modal-safe-area';
 
 import { Exercise, exerciseCatalog } from '../lib/exercises';
+import { exerciseStore } from '../lib/exerciseStore';
 import { soundStore } from '../lib/soundStore';
+import { convertLoad, loadIn, useUnits, weightUnitFor, type WeightUnit } from '../lib/units';
 import { useUserStore } from '../lib/userStore';
 import type { Workout } from '../lib/workouts';
 import { workoutSessionStore } from '../lib/workoutSessionStore';
@@ -46,6 +48,16 @@ type WorkoutExecutorProps = {
   onCancel: () => void;
 };
 
+// A superset/block is a run of consecutive exercises where each one links to the
+// next (supersetWith === index + 1). Returns the first and last index of that run.
+function getSupersetGroup(exercises: Workout['exercises'], index: number): { start: number; end: number } {
+  let start = index;
+  while (start > 0 && exercises[start - 1].supersetWith === start) start--;
+  let end = index;
+  while (end < exercises.length - 1 && exercises[end].supersetWith === end + 1) end++;
+  return { start, end };
+}
+
 // Utility to format milliseconds as mm:ss
 function formatTime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -63,6 +75,8 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
   const [loggedReps, setLoggedReps] = useState('');
   const [loggedWeight, setLoggedWeight] = useState('');
   const [loggedSets, setLoggedSets] = useState<LoggedSet[]>([]);
+  const units = useUnits();
+  const wUnit = weightUnitFor(units);
   const [startTime, setStartTime] = useState(Date.now());
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
@@ -72,46 +86,51 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
   const prefillAppliedRef = useRef<{ [key: string]: boolean }>({});
   const { profile } = useUserStore();
   
-  // Superset tracking: which exercise we started the superset from
-  const [supersetOriginIndex, setSupersetOriginIndex] = useState<number | null>(null);
-  
   // Current exercise derived from state
   const currentExercise = workout.exercises[currentExerciseIndex];
-  
-  // Check if current exercise is part of a superset
-  const isSupersetFirst = currentExercise?.supersetWith !== undefined;
-  const supersetPartnerIndex = currentExercise?.supersetWith;
-  const supersetPartner = supersetPartnerIndex !== undefined ? workout.exercises[supersetPartnerIndex] : null;
+
+  // Superset/block: exercises in a group are done back-to-back, one set each, then rest
+  const group = getSupersetGroup(workout.exercises, currentExerciseIndex);
+  const inGroup = group.end > group.start;
+  const groupSize = group.end - group.start + 1;
+  const groupPosition = currentExerciseIndex - group.start + 1;
+  const groupSets = Math.max(...workout.exercises.slice(group.start, group.end + 1).map((e) => e.sets));
+  const nextInRound = (() => {
+    if (!inGroup) return null;
+    for (let i = currentExerciseIndex + 1; i <= group.end; i++) {
+      if (workout.exercises[i].sets >= currentSetNumber) return i;
+    }
+    return null;
+  })();
+  // Is there any set left after this one? (no rest needed after the very last set)
+  const hasMoreWork = inGroup
+    ? nextInRound !== null || currentSetNumber < groupSets || group.end < workout.exercises.length - 1
+    : currentSetNumber < (currentExercise?.sets ?? 0) || currentExerciseIndex < workout.exercises.length - 1;
+  const restAfterSet = inGroup
+    ? workout.exercises[group.end].restSeconds || currentExercise.restSeconds || 0
+    : currentExercise?.restSeconds || 0;
 
 
 
-  // Advance to next set or exercise - handles supersets
+  // Advance to next set or exercise - handles supersets/blocks of any size
   function advanceSetOrExercise() {
-    // Check if we're currently in a superset (came from exercise with supersetWith)
-    if (supersetOriginIndex !== null) {
-      // We just finished the superset partner, go back to origin for next set
-      const originExercise = workout.exercises[supersetOriginIndex];
-      setCurrentExerciseIndex(supersetOriginIndex);
-      setSupersetOriginIndex(null);
-      
-      // Check if we need to advance to next set or next exercise
-      if (currentSetNumber < originExercise.sets) {
-        setCurrentSetNumber(currentSetNumber + 1);
+    if (inGroup) {
+      if (nextInRound !== null) {
+        // Next exercise in this round, same set number
+        setCurrentExerciseIndex(nextInRound);
+      } else if (currentSetNumber < groupSets) {
+        // Round finished: start the next round at the first exercise that still has sets left
+        const nextSet = currentSetNumber + 1;
+        let first = group.start;
+        while (first < group.end && workout.exercises[first].sets < nextSet) first++;
+        setCurrentExerciseIndex(first);
+        setCurrentSetNumber(nextSet);
+      } else if (group.end + 1 < workout.exercises.length) {
+        setCurrentExerciseIndex(group.end + 1);
+        setCurrentSetNumber(1);
       } else {
-        // Move to the exercise after the superset partner
-        const nextIndex = (currentExercise?.supersetWith !== undefined ? currentExercise.supersetWith : currentExerciseIndex) + 1;
-        if (nextIndex < workout.exercises.length) {
-          setCurrentExerciseIndex(nextIndex);
-          setCurrentSetNumber(1);
-        } else {
-          setShowSummary(true);
-        }
+        setShowSummary(true);
       }
-    } else if (isSupersetFirst && supersetPartnerIndex !== undefined) {
-      // We're on the first exercise of a superset, go to partner (same set number)
-      setSupersetOriginIndex(currentExerciseIndex);
-      setCurrentExerciseIndex(supersetPartnerIndex);
-      // Keep the same set number for the partner
     } else {
       // Normal advancement (not a superset)
       setCurrentSetNumber((prevSetNumber) => {
@@ -158,21 +177,20 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
         setNumber: currentSetNumber,
         reps,
         weight,
-        unit: 'lbs',
+        unit: wUnit,
       },
     ]);
     setLoggedReps('');
     setLoggedWeight('');
     
-    // If this is first exercise of superset, go immediately to partner (no rest)
-    if (isSupersetFirst && supersetPartnerIndex !== undefined) {
+    // Within a superset/block, go straight to the next exercise (no rest)
+    if (nextInRound !== null) {
       advanceSetOrExercise();
       return;
     }
-    
-    const restSeconds = currentExercise.restSeconds || 0;
-    if (restSeconds > 0 && (currentSetNumber < currentExercise.sets || currentExerciseIndex < workout.exercises.length - 1 || supersetOriginIndex !== null)) {
-      setRestTimeRemaining(restSeconds);
+
+    if (restAfterSet > 0 && hasMoreWork) {
+      setRestTimeRemaining(restAfterSet);
       setRestActive(true);
     } else {
       advanceSetOrExercise();
@@ -214,8 +232,8 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
     soundStore.playWorkoutComplete();
     const endTime = Date.now();
     const totalDuration = endTime - startTime;
-    // Calculate total volume
-    const totalVolume = loggedSets.reduce((sum, set) => sum + (set.reps * set.weight), 0);
+    // Total volume is stored in lbs so history and XP stay comparable across unit changes
+    const totalVolume = loggedSets.reduce((sum, set) => sum + set.reps * loadIn(set.weight, set.unit as WeightUnit, 'imperial'), 0);
     const session: WorkoutSession = {
       workoutId: workout.id,
       workoutTitle: workout.title,
@@ -231,11 +249,12 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
   // Handler to skip the current set and move to the next
   function handleSkipSet() {
     soundStore.playButtonClick();
-    // If rest is required after this set, start rest timer before moving to next set/exercise
-    const restSeconds = currentExercise.restSeconds || 0;
-    if (restSeconds > 0 && (currentSetNumber < currentExercise.sets || currentExerciseIndex < workout.exercises.length - 1)) {
-      setRestTimeRemaining(restSeconds);
+    // Rest after the set unless the next exercise in a superset/block comes right away
+    if (nextInRound === null && restAfterSet > 0 && hasMoreWork) {
+      setRestTimeRemaining(restAfterSet);
       setRestActive(true);
+      setLoggedReps('');
+      setLoggedWeight('');
       return;
     }
     // Use advanceSetOrExercise for consistent behavior
@@ -286,7 +305,7 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
       );
       if (last) {
         setLoggedReps(last.reps.toString());
-        setLoggedWeight(last.weight.toString());
+        setLoggedWeight(convertLoad(last.weight, (last.unit as WeightUnit) || 'lbs', wUnit).toString());
       } else {
         setLoggedReps('');
         setLoggedWeight('');
@@ -296,7 +315,7 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
   }, [currentExerciseIndex, currentSetNumber, lastSessionSets]);
 
   // Find full exercise info from catalog
-  const exerciseInfo: Exercise | undefined = exerciseCatalog.find(
+  const exerciseInfo: Exercise | undefined = [...exerciseCatalog, ...exerciseStore.getCustomExercises()].find(
     (ex) => ex.name.toLowerCase() === currentExercise.exerciseName.toLowerCase() || ex.id === currentExercise.exerciseId
   );
 
@@ -322,12 +341,13 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
 
   // Calculate current stats for overview
   const getCurrentStats = () => {
-    const totalVolume = loggedSets.reduce((sum, set) => sum + (set.reps * set.weight), 0);
+    const volumeLbs = loggedSets.reduce((sum, set) => sum + set.reps * loadIn(set.weight, set.unit as WeightUnit, 'imperial'), 0);
+    const totalVolume = loadIn(volumeLbs, 'lbs', units);
     const totalSets = loggedSets.length;
     const totalReps = loggedSets.reduce((sum, set) => sum + set.reps, 0);
     const timeSeconds = Math.round(elapsedTime / 1000);
-    // XP preview: 1 per set + 1 per 100 volume + 1 per 2 min
-    const xpPreview = totalSets + Math.floor(totalVolume / 100) + Math.floor(timeSeconds / 120);
+    // XP preview: 1 per set + 1 per 100 lbs volume + 1 per 2 min
+    const xpPreview = totalSets + Math.floor(volumeLbs / 100) + Math.floor(timeSeconds / 120);
     return { totalVolume, totalSets, totalReps, timeSeconds, xpPreview };
   };
   
@@ -421,7 +441,7 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
                 </View>
                 <View style={{ alignItems: 'center' }}>
                   <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#00B8A9' }}>{stats.totalVolume.toFixed(0)}</Text>
-                  <Text style={{ fontSize: 11, color: '#666' }}>Volume</Text>
+                  <Text style={{ fontSize: 11, color: '#666' }}>Volume ({wUnit})</Text>
                 </View>
                 <View style={{ alignItems: 'center' }}>
                   <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#FFD700' }}>+{stats.xpPreview}</Text>
@@ -442,29 +462,28 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
                 const setsLogged = loggedSets.filter(s => s.exerciseIndex === idx);
                 const isComplete = setsLogged.length === ex.sets;
                 const isCurrent = idx === currentExerciseIndex;
-                const hasSupersetWith = ex.supersetWith !== undefined;
-                const isSupersetPartner = workout.exercises.some((e, i) => e.supersetWith === idx);
+                const g = getSupersetGroup(workout.exercises, idx);
+                const inG = g.end > g.start;
+                const hasSupersetWith = inG && idx < g.end; // more exercises below in this block
+                const isSupersetPartner = inG && idx > g.start; // exercises above in this block
                 return (
                   <View key={idx} style={{ 
                     marginBottom: hasSupersetWith ? 0 : 12, 
                     padding: 12, 
                     backgroundColor: isCurrent ? '#E3F2FD' : (isComplete ? '#E8F5E9' : '#F5F5F5'),
                     borderRadius: hasSupersetWith ? 0 : 10,
-                    borderTopLeftRadius: 10,
-                    borderTopRightRadius: 10,
-                    borderBottomLeftRadius: isSupersetPartner ? 10 : (hasSupersetWith ? 0 : 10),
-                    borderBottomRightRadius: isSupersetPartner ? 10 : (hasSupersetWith ? 0 : 10),
+                    borderTopLeftRadius: isSupersetPartner ? 0 : 10,
+                    borderTopRightRadius: isSupersetPartner ? 0 : 10,
+                    borderBottomLeftRadius: hasSupersetWith ? 0 : 10,
+                    borderBottomRightRadius: hasSupersetWith ? 0 : 10,
                     borderLeftWidth: 4,
                     borderLeftColor: hasSupersetWith || isSupersetPartner ? '#FF6B35' : (isCurrent ? '#2196F3' : (isComplete ? '#4CAF50' : '#E0E0E0'))
                   }}>
-                    {hasSupersetWith && (
+                    {inG && (
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 11, color: '#FF6B35', fontWeight: '700' }}>🔥 SUPERSET (1/2)</Text>
-                      </View>
-                    )}
-                    {isSupersetPartner && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                        <Text style={{ fontSize: 11, color: '#FF6B35', fontWeight: '700' }}>🔥 SUPERSET (2/2)</Text>
+                        <Text style={{ fontSize: 11, color: '#FF6B35', fontWeight: '700' }}>
+                          🔥 SUPERSET ({idx - g.start + 1}/{g.end - g.start + 1})
+                        </Text>
                       </View>
                     )}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -532,7 +551,7 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
       {renderEndConfirmModal()}
       <Modal visible={true} animationType="slide">
         {renderCancelConfirmModal()}
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+        <ModalSafeArea style={{ flex: 1, backgroundColor: '#FFF' }}>
         <View style={[styles.container, { paddingTop: 0 }]}>
         {/* Header */}
         <View style={styles.header}>
@@ -545,8 +564,8 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
           >
             <Text style={{ fontSize: 24, color: '#FF6B6B' }}>✕</Text>
           </TouchableOpacity>
-          <View style={{ alignItems: 'center' }}>
-            <Text style={styles.workoutTitle}>{workout.title}</Text>
+          <View style={{ flex: 1, alignItems: 'center', paddingHorizontal: 8 }}>
+            <Text style={styles.workoutTitle} numberOfLines={1}>{workout.title}</Text>
             <Text style={styles.timeElapsed}>⏱️ {formatTime(elapsedTime)}</Text>
           </View>
           <View style={{ width: 40 }} />
@@ -574,191 +593,176 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
             </View>
           </View>
 
-          {/* Main Row: Exercise Card + Info Box (toggleable) */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 16 }}>
-            {/* Current Exercise Card */}
-            <View style={{ flex: 1 }}>
-              <View style={styles.exerciseCard}>
-                {/* Superset Banner */}
-                {(isSupersetFirst || supersetOriginIndex !== null) && (
-                  <View style={{ 
-                    backgroundColor: '#FF6B35', 
-                    paddingVertical: 6, 
-                    paddingHorizontal: 12, 
-                    borderRadius: 8, 
-                    marginBottom: 12,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8
-                  }}>
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
-                      🔥 SUPERSET {supersetOriginIndex !== null ? '(2/2)' : '(1/2)'}
-                    </Text>
-                    {supersetPartner && isSupersetFirst && (
-                      <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12 }}>
-                        → Next: {supersetPartner.exerciseName}
-                      </Text>
-                    )}
-                    {supersetOriginIndex !== null && (
-                      <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12 }}>
-                        ← Then rest
-                      </Text>
-                    )}
+          {/* Current exercise */}
+          <View style={styles.exerciseCard}>
+            {/* Superset Banner */}
+            {inGroup && (
+              <View style={{ 
+                backgroundColor: '#FF6B35', 
+                paddingVertical: 6, 
+                paddingHorizontal: 12, 
+                borderRadius: 8, 
+                marginBottom: 12,
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8
+              }}>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
+                  🔥 SUPERSET ({groupPosition}/{groupSize})
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12 }}>
+                  {nextInRound !== null
+                    ? `→ Next: ${workout.exercises[nextInRound].exerciseName}`
+                    : hasMoreWork
+                      ? '← Then rest'
+                      : 'Last set'}
+                </Text>
+              </View>
+            )}
+            <View style={styles.exerciseHeader}>
+              <Text style={styles.exerciseName}>{currentExercise.exerciseName}</Text>
+              <View style={styles.setIndicator}>
+                <Text style={styles.setNumber}>
+                  Set {currentSetNumber}/{currentExercise.sets}
+                </Text>
+              </View>
+            </View>
+            {/* Exercise Details (no muscle diagram) */}
+            <View style={styles.exerciseDetailsSection}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Target Reps:</Text>
+                    <Text style={styles.detailValue}>{currentExercise.reps}</Text>
                   </View>
-                )}
-                <View style={styles.exerciseHeader}>
-                  <Text style={styles.exerciseName}>{currentExercise.exerciseName}</Text>
-                  <View style={styles.setIndicator}>
-                    <Text style={styles.setNumber}>
-                      Set {currentSetNumber}/{currentExercise.sets}
-                    </Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Rest Between Sets:</Text>
+                    <Text style={styles.detailValue}>{currentExercise.restSeconds}s</Text>
                   </View>
-                </View>
-                {/* Exercise Details (no muscle diagram) */}
-                <View style={styles.exerciseDetailsSection}>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Target Reps:</Text>
-                        <Text style={styles.detailValue}>{currentExercise.reps}</Text>
-                      </View>
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Rest Between Sets:</Text>
-                        <Text style={styles.detailValue}>{currentExercise.restSeconds}s</Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-                {/* Log Form */}
-                <View style={styles.formSection}>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Reps Completed</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Enter reps"
-                      keyboardType="number-pad"
-                      value={loggedReps}
-                      onChangeText={setLoggedReps}
-                      autoCorrect={false}
-                      autoCapitalize="none"
-                    />
-                  </View>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Weight Used ({currentExercise.unit})</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Enter weight"
-                      keyboardType="decimal-pad"
-                      value={loggedWeight}
-                      onChangeText={setLoggedWeight}
-                      autoCorrect={false}
-                      autoCapitalize="none"
-                    />
-                  </View>
-                </View>
-                {/* Sets Logged for This Exercise */}
-                {loggedSets.filter((s) => s.exerciseIndex === currentExerciseIndex).length > 0 && (
-                  <View style={styles.completedSetsSection}>
-                    <Text style={styles.completedSetsTitle}>Sets Logged</Text>
-                    {loggedSets
-                      .filter((s) => s.exerciseIndex === currentExerciseIndex)
-                      .map((set, idx) => (
-                        <View key={idx} style={styles.completedSetItem}>
-                          <Text style={styles.completedSetText}>
-                            Set {set.setNumber}: {set.reps} reps × {set.weight} {set.unit}
-                          </Text>
-                          <Text style={styles.setVolume}>
-                            Vol: {(set.reps * set.weight).toFixed(0)}
-                          </Text>
-                        </View>
-                      ))}
-                  </View>
-                )}
-                {/* Action Buttons */}
-                <View style={styles.buttonGroup}>
-                  <TouchableOpacity
-                    style={[styles.button, styles.skipButton]}
-                    onPress={handleSkipSet}
-                  >
-                    <Text style={styles.skipButtonText}>⏭️ Skip Set</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.button, styles.logButton]}
-                    onPress={handleLogSet}
-                  >
-                    <Text style={styles.logButtonText}>✓ Log Set</Text>
-                  </TouchableOpacity>
                 </View>
               </View>
             </View>
-            {/* Exercise Info Box (Catalog Style, toggleable) */}
-            <View style={{ flex: 1, marginLeft: 0, minWidth: 0 }}>
-              {showInfoBox ? (
-                <View style={{ backgroundColor: '#f7f7f7', borderRadius: 10, padding: 16, borderWidth: 1, borderColor: '#e0e0e0' }}>
-                  <TouchableOpacity onPress={() => setShowInfoBox(false)} style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
-                    <Text style={{ fontSize: 18, color: '#888' }}>⏴</Text>
-                  </TouchableOpacity>
-                  {/* Exercise name and badges */}
-                  <View style={{ marginTop: 4 }}>
-                    <Text style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 6 }}>{currentExercise.exerciseName}</Text>
-                    {/* Difficulty and category badges */}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                      {exerciseInfo?.category && [
-                        'cardio',
-                        'athletic',
-                        'power',
-                        'agility',
-                        'stretching',
-                      ].includes(exerciseInfo.category) && (
-                        <View style={{ backgroundColor: '#E0F7FA', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 }}>
-                          <Text style={{ color: '#00796B', fontWeight: '700', fontSize: 12, textTransform: 'capitalize' }}>{exerciseInfo.category}</Text>
-                        </View>
-                      )}
-                      {exerciseInfo?.difficulty && (
-                        <View style={{ backgroundColor: '#E0F7FA', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 }}>
-                          <Text style={{ color: '#00796B', fontWeight: '700', fontSize: 12, textTransform: 'capitalize' }}>{exerciseInfo.difficulty}</Text>
-                        </View>
+            {/* Log Form */}
+            <View style={styles.formSection}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Reps Completed</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter reps"
+                  keyboardType="number-pad"
+                  value={loggedReps}
+                  onChangeText={setLoggedReps}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Weight Used ({wUnit})</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter weight"
+                  keyboardType="decimal-pad"
+                  value={loggedWeight}
+                  onChangeText={setLoggedWeight}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+              </View>
+            </View>
+            {/* Sets Logged for This Exercise */}
+            {loggedSets.filter((s) => s.exerciseIndex === currentExerciseIndex).length > 0 && (
+              <View style={styles.completedSetsSection}>
+                <Text style={styles.completedSetsTitle}>Sets Logged</Text>
+                {loggedSets
+                  .filter((s) => s.exerciseIndex === currentExerciseIndex)
+                  .map((set, idx) => (
+                    <View key={idx} style={styles.completedSetItem}>
+                      <Text style={styles.completedSetText}>
+                        Set {set.setNumber}: {set.reps} reps × {set.weight} {set.unit}
+                      </Text>
+                      <Text style={styles.setVolume}>
+                        Vol: {(set.reps * set.weight).toFixed(0)}
+                      </Text>
+                    </View>
+                  ))}
+              </View>
+            )}
+            {/* Action Buttons */}
+            <View style={styles.buttonGroup}>
+              <TouchableOpacity
+                style={[styles.button, styles.skipButton]}
+                onPress={handleSkipSet}
+              >
+                <Text style={styles.skipButtonText}>⏭️ Skip Set</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, styles.logButton]}
+                onPress={handleLogSet}
+              >
+                <Text style={styles.logButtonText}>✓ Log Set</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* About this exercise (full width, collapsible) */}
+          <View style={styles.infoCard}>
+            <View style={styles.infoHeader}>
+              <Text style={styles.infoTitle}>About this exercise</Text>
+              <TouchableOpacity onPress={() => setShowInfoBox((v) => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.infoToggle}>{showInfoBox ? 'Hide' : 'Show'}</Text>
+              </TouchableOpacity>
+            </View>
+            {showInfoBox && (
+              <View style={styles.infoBody}>
+                {(exerciseInfo?.difficulty || exerciseInfo?.category) && (
+                  <View style={styles.badgeRow}>
+                    {exerciseInfo?.category && (
+                      <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{exerciseInfo.category}</Text>
+                      </View>
+                    )}
+                    {exerciseInfo?.difficulty && (
+                      <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{exerciseInfo.difficulty}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+                <Text style={styles.infoDescription}>
+                  {exerciseInfo?.description || 'No description available.'}
+                </Text>
+                {exerciseInfo?.muscleGroups && exerciseInfo.muscleGroups.length > 0 && (
+                  <View style={styles.musclesRow}>
+                    <View style={styles.musclesDiagram}>
+                      <RealisticMuscleDiagram highlighted={exerciseInfo.muscleGroups} side="front" width={90} height={130} />
+                    </View>
+                    <View style={styles.musclesText}>
+                      <Text style={styles.infoSubheading}>Muscles worked</Text>
+                      <Text style={styles.infoMeta}>{exerciseInfo.muscleGroups.join(', ')}</Text>
+                      {exerciseInfo?.equipment && exerciseInfo.equipment.length > 0 && (
+                        <>
+                          <Text style={[styles.infoSubheading, { marginTop: 10 }]}>Equipment</Text>
+                          <Text style={styles.infoMeta}>{exerciseInfo.equipment.join(', ')}</Text>
+                        </>
                       )}
                     </View>
                   </View>
-                  {/* Description - full width */}
-                  <Text style={{ color: '#666', fontSize: 13, lineHeight: 20, marginBottom: 10 }}>
-                    {exerciseInfo?.description || 'No description available.'}
-                  </Text>
-                  {/* Muscle diagram - below description */}
-                  {exerciseInfo?.muscleGroups && exerciseInfo.muscleGroups.length > 0 && (
-                    <View style={{ alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FFFE', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#E8F5F5', alignSelf: 'center', marginBottom: 8 }}>
-                      <Text style={{ fontSize: 10, fontWeight: '600', color: '#00B8A9', marginBottom: 4 }}>Muscles Worked</Text>
-                      <RealisticMuscleDiagram 
-                        highlighted={exerciseInfo.muscleGroups} 
-                        side="front"
-                        width={90}
-                        height={130}
-                      />
-                    </View>
-                  )}
-                  {/* Equipment and instructions below */}
-                  {exerciseInfo?.equipment && exerciseInfo.equipment.length > 0 && (
-                    <Text style={{ color: '#888', fontSize: 13, marginBottom: 4 }}>
-                      Equipment: {exerciseInfo.equipment.join(', ')}
-                    </Text>
-                  )}
-                  {exerciseInfo?.instructions && exerciseInfo.instructions.length > 0 && (
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={{ fontWeight: '600', fontSize: 13, marginBottom: 2 }}>How to Perform:</Text>
-                      {exerciseInfo.instructions.slice(0, 3).map((step, idx) => (
-                        <Text key={idx} style={{ color: '#444', fontSize: 13, marginLeft: 8 }}>• {step}</Text>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              ) : (
-                <TouchableOpacity onPress={() => setShowInfoBox(true)} style={{ alignSelf: 'flex-end', padding: 8 }}>
-                  <Text style={{ fontSize: 18, color: '#888' }}>⏵ Show Info</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+                )}
+                {exerciseInfo?.instructions && exerciseInfo.instructions.length > 0 && (
+                  <View style={{ gap: 6 }}>
+                    <Text style={styles.infoSubheading}>How to perform</Text>
+                    {exerciseInfo.instructions.map((step, idx) => (
+                      <View key={idx} style={styles.stepRow}>
+                        <Text style={styles.stepNumber}>{idx + 1}.</Text>
+                        <Text style={styles.stepText}>{step}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
           </View>
 
           {/* End Workout Button */}
@@ -781,7 +785,7 @@ export default function WorkoutExecutor({ workout, onComplete, onCancel }: Worko
           </Pressable>
         </ScrollView>
       </View>
-      </SafeAreaView>
+      </ModalSafeArea>
     </Modal>
     </>
   );
@@ -898,6 +902,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1A1A1A',
     flex: 1,
+    marginRight: 12,
   },
   setIndicator: {
     backgroundColor: '#00B8A9',
@@ -931,6 +936,97 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#00B8A9',
     fontWeight: '700',
+  },
+  infoCard: {
+    backgroundColor: '#F7F7F7',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  infoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  infoTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  infoToggle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#00B8A9',
+  },
+  infoBody: {
+    marginTop: 12,
+    gap: 14,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  badge: {
+    backgroundColor: '#E0F7FA',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  badgeText: {
+    color: '#00796B',
+    fontWeight: '700',
+    fontSize: 12,
+    textTransform: 'capitalize',
+  },
+  infoDescription: {
+    color: '#555',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  musclesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  musclesDiagram: {
+    backgroundColor: '#F0FFFE',
+    borderRadius: 12,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#E8F5F5',
+  },
+  musclesText: {
+    flex: 1,
+  },
+  infoSubheading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 2,
+  },
+  infoMeta: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 19,
+    textTransform: 'capitalize',
+  },
+  stepRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  stepNumber: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#00B8A9',
+    width: 18,
+  },
+  stepText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#444',
+    lineHeight: 19,
   },
   formSection: {
     marginBottom: 16,

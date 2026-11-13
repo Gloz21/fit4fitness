@@ -7,11 +7,10 @@
     "icon": "./assets/images/icon.png",
     "scheme": "myfirstfitnessapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.avaglosny.fit4fitness",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "appleTeamId": "3NF58SXX54",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app does not use the microphone.",
@@ -25,7 +24,6 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -44,6 +42,19 @@
           "dark": {
             "backgroundColor": "#1a1a2e"
           }
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "expo-image",
+      "expo-status-bar",
+      "expo-audio",
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Fit4Fitness to access your photos so you can set a profile picture.",
+          "cameraPermission": "Allow Fit4Fitness to use the camera so you can take a profile picture."
         }
       ]
     ],

@@ -2514,3 +2514,8 @@ export const getExercisesByCategory = (category: Exercise['category']) => {
 export const getExerciseById = (id: string) => {
   return exerciseCatalog.find((ex) => ex.id === id);
 };
+
+// Add the exercises from the categorized library (exerciseLibrary.ts) that aren't above
+// eslint-disable-next-line import/first
+import { libraryExercises } from './exerciseLibrary';
+exerciseCatalog.push(...libraryExercises);

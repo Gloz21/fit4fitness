@@ -4,7 +4,7 @@ export type WorkoutExercise = {
   sets: number;
   reps: number;
   weight?: number;
-  unit?: 'lbs';
+  unit?: 'lbs' | 'kg';
   restSeconds: number;
   notes?: string;
   // Superset: link to another exercise index (0-based) to perform back-to-back
